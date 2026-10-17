@@ -18,7 +18,12 @@
 		     (`type=text`, `autocomplete=off`, `aria-autocomplete=list`), but password
 		     managers largely ignore that and offer to fill anything they can focus, so
 		     each one gets the opt-out it does honour. Harmless where the extension is not
-		     installed. -->
+		     installed.
+
+		     Apple's Passwords ignores the data attributes too; it goes by field type, and
+		     it does not offer to fill a search field. bits-ui hardcodes `type=text` and
+		     wins any merge, so the override has to come after the spread below. The two
+		     arbitrary variants drop the native clear button that `type=search` brings. -->
 		<CommandPrimitive.Input
 			{value}
 			data-slot="command-input"
@@ -33,7 +38,16 @@
 			{...restProps}
 		>
 			{#snippet child({ props })}
-				<InputGroup.Input {...props} bind:value bind:ref />
+				<InputGroup.Input
+					{...props}
+					type="search"
+					class={cn(
+						props.class as string | undefined,
+						"[&::-webkit-search-cancel-button]:appearance-none [&::-webkit-search-decoration]:appearance-none"
+					)}
+					bind:value
+					bind:ref
+				/>
 			{/snippet}
 		</CommandPrimitive.Input>
 		<InputGroup.Addon>
