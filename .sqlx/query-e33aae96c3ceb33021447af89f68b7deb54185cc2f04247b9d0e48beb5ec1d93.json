@@ -1,16 +1,16 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select ghost_unlinked_wormholes from maps where id = $1",
+  "query": "select id from maps where id = $1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "ghost_unlinked_wormholes",
-        "type_info": "Bool",
+        "name": "id",
+        "type_info": "Int8",
         "origin": {
           "Table": {
             "table": "maps",
-            "name": "ghost_unlinked_wormholes"
+            "name": "id"
           }
         }
       }
@@ -24,5 +24,5 @@
       false
     ]
   },
-  "hash": "423d78e943ebf0703ba50b856709c07abed5ea47c59e15743c834d10935dd85a"
+  "hash": "e33aae96c3ceb33021447af89f68b7deb54185cc2f04247b9d0e48beb5ec1d93"
 }
