@@ -35,6 +35,27 @@ export function pilotsBySystem(characters: MapCharacter[]): Map<number, MapChara
 }
 
 /** Both endpoints count: the badge says how many lines touch the node. */
+/**
+ * How many of a placement's edges lead to a hole nobody has been through, by placement.
+ *
+ * A scanned wormhole is drawn its own node from the moment it is found, so counting the
+ * scans that have no connection -- which is what "unmapped" used to mean -- now counts
+ * nothing at all. The question a node's badge answers is unchanged: how many holes here
+ * has nobody flown? That is the edges whose far side is still a ghost.
+ */
+export function unmappedCountByPlacement(
+	connections: MapConnection[],
+	isGhost: (placementId: number) => boolean,
+): Map<number, number> {
+	const out = new Map<number, number>();
+	const bump = (id: number) => out.set(id, (out.get(id) ?? 0) + 1);
+	for (const c of connections) {
+		if (isGhost(c.to_system)) bump(c.from_system);
+		if (isGhost(c.from_system)) bump(c.to_system);
+	}
+	return out;
+}
+
 export function connectionCountByPlacement(connections: MapConnection[]): Map<number, number> {
 	const out = new Map<number, number>();
 	for (const c of connections) {

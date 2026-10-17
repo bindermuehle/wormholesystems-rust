@@ -125,7 +125,11 @@
 				data-testid="sig-type-search"
 			/>
 			<Command.List class="max-h-64">
-				<Command.Empty class="py-4 text-xs">No type matches</Command.Empty>
+				<!-- Our own, because `shouldFilter={false}` means the primitive does not know
+				     what the query ruled out and so never reaches its own empty state. -->
+				{#if shown.length === 0}
+					<div class="py-4 text-center text-xs text-muted-foreground">No type matches</div>
+				{/if}
 				<Command.Group>
 					<Command.Item value="none" onSelect={() => pick(null)} class="text-xs">
 						<span class="text-muted-foreground">Unknown</span>

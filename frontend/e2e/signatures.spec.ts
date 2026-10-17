@@ -57,7 +57,7 @@ test('wormhole type select: statics first, K162 group, chosen type survives repa
 	await expect(page.getByTestId('signatures-pasted-at')).toHaveText(/^\s*\d+s$/);
 	await row.getByTestId('sig-type').click();
 	// Statics section leads with the system's static; K162 has its own group.
-	const headings = page.locator('[data-slot="command-group"] [cmdk-group-heading]');
+	const headings = page.locator('[data-command-group-heading]');
 	await expect(headings.filter({ hasText: 'Statics' })).toBeVisible();
 	await expect(headings.filter({ hasText: 'K162' })).toBeVisible();
 	const h296 = page.getByRole('option', { name: /H296/ });
@@ -218,14 +218,22 @@ test('wormhole type and connection can be unset back to Unknown', async ({ brows
 	let sigs = await (await api.get(`/api/maps/${mapId}/signatures`)).json();
 	expect(sigs[0].signature_type_id).toBeNull();
 
-	// Unset the connection: unlinked, but the connection itself stays on the map.
+	// Unset the connection: it lets go of Jita, and the hole it leads to is drawn for it
+	// rather than left as nothing -- a scanned wormhole with nowhere to lead is owed a
+	// node, which is where its name lives. The connection to Jita stays on the map.
 	await row.getByTestId('sig-connection').click();
 	await page.getByRole('option', { name: 'Unknown' }).click();
-	await expect(row.getByTestId('sig-connection')).toContainText('Connection');
+	await expect(row.getByTestId('sig-connection')).toContainText('Unmapped');
 	sigs = await (await api.get(`/api/maps/${mapId}/signatures`)).json();
-	expect(sigs[0].connection_id).toBeNull();
 	const view = await (await api.get(`/api/maps/${mapId}`)).json();
-	expect(view.connections).toHaveLength(1);
+	const ghost = view.systems.find((s: { kind: string }) => s.kind === 'ghost');
+	expect(ghost, 'the hole it now leads to').toBeTruthy();
+	const toGhost = view.connections.find(
+		(c: { from_system: number; to_system: number }) =>
+			c.from_system === ghost.id || c.to_system === ghost.id,
+	);
+	expect(sigs[0].connection_id).toBe(toGhost.id);
+	expect(view.connections).toHaveLength(2);
 	await ctx.close();
 });
 

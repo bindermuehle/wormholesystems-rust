@@ -26,6 +26,7 @@
 		pos,
 		sigCounts,
 		connectionCount,
+		unmappedCount,
 		pilots = [],
 		showThreat = true,
 		onselect,
@@ -47,6 +48,8 @@
 		pos: { x: number; y: number };
 		sigCounts: SigCounts;
 		connectionCount: number;
+		/** How many of this node's holes lead somewhere nobody has been. */
+		unmappedCount: number;
 		pilots?: MapCharacter[];
 		showThreat?: boolean;
 		onselect: (ev: PointerEvent) => void;
@@ -80,7 +83,10 @@
 	const showStatics = $derived(
 		isWormholeClass(mapped?.wormhole_class_id ?? null) && (mapped?.statics.length ?? 0) > 0,
 	);
-	const unmapped = $derived(Math.max(0, sigCounts.wormholes - connectionCount));
+	// Holes here nobody has flown. Counted from the edges that lead to a ghost rather than
+	// from scans without a connection: a scanned hole is drawn its own node straight away,
+	// so by that measure nothing is ever unmapped.
+	const unmapped = $derived(unmappedCount);
 
 	let editorOpen = $state(false);
 	// The editor is mounted the first time it is asked for and kept after, so most nodes

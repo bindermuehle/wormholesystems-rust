@@ -140,12 +140,16 @@ test('a jump through a scanned hole places the system, connects it and links the
 
 	// The whole jump is one history step.
 	await pilot.page.getByTestId('undo-button').click();
+	// The system jumped to is gone, and the scan that led there is owed a node again, so
+	// what is left is the origin and the hole drawn for that scan.
 	await expect
 		.poll(async () => (await graph(api, mapId)).systems.length, { timeout: 10_000 })
-		.toBe(1);
+		.toBe(2);
+	const undoneView = await graph(api, mapId);
+	expect(undoneView.systems.filter((s) => s.kind === 'ghost')).toHaveLength(1);
 	const undone = await (await api.get(`/api/maps/${mapId}/signatures`)).json();
 	expect(undone).toHaveLength(1);
-	expect(undone[0].connection_id).toBeNull();
+	expect(undone[0].connection_id, 'relinked to the hole drawn for it').not.toBeNull();
 
 	await pilot.close();
 });
@@ -202,9 +206,10 @@ test('closing the prompt still maps the jump, only unlinked', async ({
 		.toBe(2);
 	const view = await graph(api, mapId);
 	expect(view.systems.find((s) => s.solar_system_id === J005482)?.alias).toBe('1');
-	expect(view.connections).toHaveLength(1);
+	// The jump's own connection, plus the one to the node the unlinked scan is owed.
+	expect(view.connections).toHaveLength(2);
 	const sigs = await (await api.get(`/api/maps/${mapId}/signatures`)).json();
-	expect(sigs[0].connection_id).toBeNull();
+	expect(sigs[0].connection_id, 'leads to its own hole, not the jump').not.toBeNull();
 
 	await pilot.close();
 });
@@ -223,10 +228,13 @@ test('stop asking still maps the jump it was asked about', async ({ api, browser
 	await dialog.getByTestId('tracking-disable').click();
 	await expect(dialog).toBeHidden();
 
+	// The origin, the system jumped to, and the node the scan is still owed: the jump was
+	// mapped without saying which hole it came through, so that scan leads somewhere of
+	// its own.
 	await expect
 		.poll(async () => (await graph(api, mapId)).systems.length, { timeout: 10_000 })
-		.toBe(2);
-	expect((await graph(api, mapId)).connections).toHaveLength(1);
+		.toBe(3);
+	expect((await graph(api, mapId)).connections).toHaveLength(2);
 
 	await pilot.close();
 });

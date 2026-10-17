@@ -12,7 +12,12 @@
 	import type { MapSystemView } from '$lib/api/types/MapSystemView';
 	import { NODE_W, railEndpoint } from '$lib/map/geometry';
 	import { canvasBackground } from '$lib/map/background';
-	import { connectionCountByPlacement, pilotsBySystem, sigCountsBySystem } from '$lib/map/grouping';
+	import {
+		connectionCountByPlacement,
+		unmappedCountByPlacement,
+		pilotsBySystem,
+		sigCountsBySystem,
+	} from '$lib/map/grouping';
 	import { curveBetween } from '$lib/map/edges';
 	import CanvasControls from './canvas/CanvasControls.svelte';
 	import ConnectionPopover from './connection/ConnectionPopover.svelte';
@@ -126,6 +131,13 @@
 	const sigCounts = $derived(sigCountsBySystem(map.signatures.all));
 	const pilots = $derived(pilotsBySystem(map.characters.all));
 	const connCounts = $derived(connectionCountByPlacement(map.connections.all));
+	// Holes nobody has flown, by node: the edges whose far side is still a ghost.
+	const unmappedCounts = $derived(
+		unmappedCountByPlacement(
+			map.connections.all,
+			(id) => map.systems.byId.get(id)?.kind === 'ghost',
+		),
+	);
 
 	function saveAlias(s: MapSystemView, alias: string | null, occupier: string | null) {
 		map.systems.rename(s, alias, occupier);
@@ -270,6 +282,7 @@
 						wormholes: 0,
 					}}
 					connectionCount={connCounts.get(s.id) ?? 0}
+					unmappedCount={unmappedCounts.get(s.id) ?? 0}
 					pilots={pilots.get(solarSystemId(s) ?? -1) ?? []}
 					showThreat={map.userSettings?.show_threat_level ?? true}
 					draggable={!map.layoutLocked && canWrite}
