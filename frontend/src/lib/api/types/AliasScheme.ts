@@ -3,4 +3,4 @@
 /**
  * How a chain names itself: the sequence an alias suggestion walks.
  */
-export type AliasScheme = "numeric" | "alphabetical";
+export type AliasScheme = "numeric" | "alphabetical" | "echo";

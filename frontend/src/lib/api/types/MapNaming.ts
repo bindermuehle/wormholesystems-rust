@@ -7,8 +7,9 @@ import type { AliasScheme } from "./AliasScheme";
  */
 export type MapNaming = { 
 /**
- * `numeric` (`1`, `11`, `12`) or `alphabetical` (`A`, `AB`, with `H/L/N/P` reserved
- * for k-space exits).
+ * `numeric` (`1`, `11`, `12`), `alphabetical` (`A`, `AB`, with `H/L/N/P` reserved
+ * for k-space exits) or `echo` (`a5s`, `b4a`: a branch letter per link off home, the
+ * destination's class, then a slot letter).
  */
 alias_scheme: AliasScheme, 
 /**

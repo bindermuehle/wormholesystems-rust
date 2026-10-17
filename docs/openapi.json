@@ -6290,7 +6290,8 @@
         "description": "How a chain names itself: the sequence an alias suggestion walks.",
         "enum": [
           "numeric",
-          "alphabetical"
+          "alphabetical",
+          "echo"
         ]
       },
       "Announcement": {
@@ -8318,7 +8319,7 @@
         "properties": {
           "alias_scheme": {
             "$ref": "#/components/schemas/AliasScheme",
-            "description": "`numeric` (`1`, `11`, `12`) or `alphabetical` (`A`, `AB`, with `H/L/N/P` reserved\nfor k-space exits)."
+            "description": "`numeric` (`1`, `11`, `12`), `alphabetical` (`A`, `AB`, with `H/L/N/P` reserved\nfor k-space exits) or `echo` (`a5s`, `b4a`: a branch letter per link off home, the\ndestination's class, then a slot letter)."
           },
           "bookmark_kspace": {
             "type": "string"
