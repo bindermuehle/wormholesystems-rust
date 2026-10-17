@@ -35,11 +35,23 @@
 	const buffer = draftOf(() => naming);
 	const dirty = $derived(buffer.dirty);
 
-	const ALIAS_SCHEMES = ['numeric', 'alphabetical'] as const satisfies readonly AliasScheme[];
+	const ALIAS_SCHEMES = [
+		'numeric',
+		'alphabetical',
+		'echo',
+	] as const satisfies readonly AliasScheme[];
 	const scheme = $derived(buffer.value.alias_scheme);
+
+	/**
+	 * Echo names a hole after what it leads to and which branch off home it hangs from,
+	 * so there is no sequence to walk without a map under it. A worked example says more
+	 * than three names generated from nothing would.
+	 */
+	const ECHO_PREVIEW = 'a5s, a5a, b3a, aDa';
 
 	/** The first three children of a chain, so switching scheme shows the difference. */
 	const aliasPreview = $derived.by(() => {
+		if (scheme === 'echo') return ECHO_PREVIEW;
 		const taken: string[] = [];
 		for (let i = 0; i < 3; i++) {
 			taken.push(guessNextAlias('', taken, { scheme, ignoredAlias: buffer.value.ignored_alias }));
@@ -123,11 +135,15 @@
 				>
 					<ToggleGroup.Item value="numeric">Numeric</ToggleGroup.Item>
 					<ToggleGroup.Item value="alphabetical">Alphabetical</ToggleGroup.Item>
+					<ToggleGroup.Item value="echo">Echo</ToggleGroup.Item>
 				</ToggleGroup.Root>
 				<Field.FieldDescription>
 					Chains start <span class="font-mono" data-testid="alias-preview">{aliasPreview}</span>
 					{#if scheme === 'alphabetical'}
 						. H, L, N and P are reserved for exits to known space.
+					{:else if scheme === 'echo'}
+						. A branch letter per hole off home, then the destination's class, then a slot letter.
+						Home's own static always takes <span class="font-mono">s</span>.
 					{/if}
 				</Field.FieldDescription>
 			</Field.Field>

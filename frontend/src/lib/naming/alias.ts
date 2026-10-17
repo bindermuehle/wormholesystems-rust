@@ -1,7 +1,9 @@
 // An alias extends its parent's, so it carries the path: `1` → `11` → `112`, or `A` → `AB`
 // → `ABC`. A bookmark therefore says which way home is without reading the map.
 
-export type AliasScheme = 'numeric' | 'alphabetical';
+import { generateEchoAlias, type EchoContext } from './echo';
+
+export type AliasScheme = 'numeric' | 'alphabetical' | 'echo';
 
 /** K-space exits take a reserved letter, so a wormhole chain never reads as the way out. */
 export type AliasTargetKind = 'wormhole' | 'h' | 'l' | 'n' | 'p';
@@ -77,8 +79,21 @@ function nextKspaceIndex(prefix: string, letter: string, aliases: string[]): num
 export function guessNextAlias(
 	parentAlias: string | null | undefined,
 	aliases: string[],
-	opts?: { scheme?: AliasScheme; targetKind?: AliasTargetKind; ignoredAlias?: string },
+	opts?: {
+		scheme?: AliasScheme;
+		targetKind?: AliasTargetKind;
+		ignoredAlias?: string;
+		echo?: EchoContext;
+	},
 ): string {
+	// Echo runs before the upper-casing below: its type characters are capitals while the
+	// branch and slot are lower case, so `a5s` would come back as `A5S` and stop matching
+	// the aliases already on the map. It also reads the parent's alias for a branch letter
+	// rather than extending it as a prefix.
+	if (opts?.scheme === 'echo' && opts.echo) {
+		return generateEchoAlias(parentAlias, aliases, opts.echo) ?? '';
+	}
+
 	let prefix = (parentAlias ?? '').trim().toUpperCase();
 	// The home system is not a chain node, so its children start a fresh sequence.
 	if (isIgnoredAlias(prefix, opts?.ignoredAlias)) prefix = '';
@@ -131,13 +146,23 @@ export function suggestAlias(params: {
 	scheme?: AliasScheme;
 	targetKind?: AliasTargetKind;
 	ignoredAlias?: string;
+	echo?: EchoContext;
 }): string | null {
 	const originIsAliased = Boolean(params.parentAlias && params.parentAlias.trim());
-	if (!params.targetIsWormhole && !params.originIsWormhole && !originIsAliased) return null;
+	// Home has no alias of its own to inherit from, so echo names a hole scanned there on
+	// the strength of `originIsHome` alone.
+	const echoFromHome = params.scheme === 'echo' && Boolean(params.echo?.originIsHome);
+	if (!params.targetIsWormhole && !params.originIsWormhole && !originIsAliased && !echoFromHome) {
+		return null;
+	}
 
-	return guessNextAlias(params.parentAlias, params.aliases, {
+	const alias = guessNextAlias(params.parentAlias, params.aliases, {
 		scheme: params.scheme,
 		targetKind: params.targetKind,
 		ignoredAlias: params.ignoredAlias,
+		echo: params.echo,
 	});
+	// Echo declines to name some destinations (an abyssal class, a branch with no free
+	// slot); an empty suggestion is no suggestion.
+	return alias === '' ? null : alias;
 }

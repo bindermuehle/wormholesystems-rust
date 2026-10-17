@@ -23,6 +23,7 @@
 	import { LIFETIME_OPTIONS, SIGNATURE_MASS_OPTIONS } from '$lib/map/connection-status';
 	import { CATEGORIES, categoryMeta, typeById } from '$lib/map/signatures';
 	import type { SignatureContext, SignaturePatch } from '$lib/map/signature-context';
+	import { echoContextFor, type ScannedHole } from '$lib/naming/echo-context';
 	import ConnectionInput from './signature-row/ConnectionInput.svelte';
 	import TimeDetails from './signature-row/TimeDetails.svelte';
 	import TypeInput from './signature-row/TypeInput.svelte';
@@ -126,6 +127,15 @@
 	// name in the chain rather than all of them claiming the first. Written onto the ghost
 	// when there is one, so the next row sees it taken; a hole with no placement at all
 	// gets the name on the clipboard only.
+	/** A signature as the echo scheme reads it: its wormhole code and when it was scanned. */
+	function asHole(signature: Signature): ScannedHole {
+		return {
+			id: signature.id,
+			code: typeById(catalog, signature.signature_type_id)?.signature ?? null,
+			created_at: signature.created_at,
+		};
+	}
+
 	function guessAlias(farClass: number | null, farSecurity: number | null): string | null {
 		const targetIsWormhole = isWormholeClass(farClass);
 		const alias = suggestAlias({
@@ -136,6 +146,17 @@
 			scheme: ctx.naming?.alias_scheme,
 			targetKind: aliasTargetKind(targetIsWormhole, classMeta(farClass, farSecurity).short),
 			ignoredAlias: ctx.naming?.ignored_alias,
+			// Only the echo scheme reads this; the other two ignore it.
+			echo: echoContextFor({
+				systems: ctx.systems,
+				connections: ctx.connections,
+				originSystemId: system.id,
+				targetClassId: farClass,
+				hole: asHole(sig),
+				holesInOrigin: ctx.sigs
+					.filter((other) => other.solar_system_id === sig.solar_system_id)
+					.map(asHole),
+			}),
 		});
 		if (alias && linkedTarget && canWrite) ctx.actions?.setAlias(linkedTarget, alias);
 		return alias;

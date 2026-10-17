@@ -19,6 +19,7 @@ import type { SignatureCatalog } from '$lib/api/types/SignatureCatalog';
 import type { SystemSearchResult } from '$lib/api/types/SystemSearchResult';
 import type { TrackJump } from '$lib/api/types/TrackJump';
 import { aliasTargetKind, suggestAlias } from '$lib/naming/alias';
+import { echoContextFor, type ScannedHole } from '$lib/naming/echo-context';
 import { freePosition } from '$lib/map/geometry';
 import { sizeForJumpMass } from '$lib/map/mass';
 import { classMeta, isWormholeClass } from '$lib/map/classes';
@@ -189,7 +190,7 @@ export class JumpTracker {
 				origin,
 				targetSolarSystemId: toSystemId,
 				signaturePk: null,
-				alias: this.suggestAliasFor(origin, target, existing),
+				alias: this.suggestAliasFor(origin, target, existing, null, catalog),
 				at: this.placeNear(origin),
 			});
 			return;
@@ -210,7 +211,15 @@ export class JumpTracker {
 			existing,
 			groups,
 			catalog,
-			suggestedAlias: this.suggestAliasFor(origin, target, existing),
+			// Before the pilot picks, the only unambiguous hole is a single likely candidate;
+			// TrackingForm asks again once they choose.
+			suggestedAlias: this.suggestAliasFor(
+				origin,
+				target,
+				existing,
+				this.holeFor(groups.likely.length === 1 ? groups.likely[0] : null, catalog),
+				catalog,
+			),
 			ghostAliases: ghostAliases(ghosts, originSignatures, map.systems()),
 			at: this.placeNear(origin),
 		};
@@ -230,10 +239,29 @@ export class JumpTracker {
 		return { name: hit.name, classId: hit.wormhole_class_id, security: hit.security };
 	}
 
+	/**
+	 * The hole the echo scheme should read, as a signature or null when the jump has not
+	 * said which one it was. Without it a hole flown out of home cannot be recognised as
+	 * home's static, so it is named like any other link rather than taking the `s` slot.
+	 */
+	private holeFor(
+		signature: Signature | null,
+		catalog: SignatureCatalog | null,
+	): ScannedHole | null {
+		if (!signature) return null;
+		return {
+			id: signature.id,
+			code: catalog ? (typeById(catalog, signature.signature_type_id)?.signature ?? null) : null,
+			created_at: signature.created_at,
+		};
+	}
+
 	private suggestAliasFor(
 		origin: MappedSystem,
 		target: { classId: number | null; security: number },
 		existing: MappedSystem | null,
+		hole: ScannedHole | null = null,
+		catalog: SignatureCatalog | null = null,
 	): string | null {
 		// A system already on the map keeps the name the chain knows it by.
 		if (existing?.alias) return existing.alias;
@@ -241,6 +269,7 @@ export class JumpTracker {
 
 		const naming = this.map.naming();
 		const targetIsWormhole = isWormholeClass(target.classId);
+		const originSolarSystemId = solarSystemId(origin);
 		return suggestAlias({
 			parentAlias: origin.alias,
 			targetIsWormhole,
@@ -255,7 +284,36 @@ export class JumpTracker {
 				classMeta(target.classId, target.security).short,
 			),
 			ignoredAlias: naming?.ignored_alias,
+			// Only the echo scheme reads this; the other two ignore it.
+			echo: echoContextFor({
+				systems: this.map.systems(),
+				connections: this.map.connections(),
+				originSystemId: origin.id,
+				targetClassId: target.classId,
+				hole,
+				holesInOrigin: this.map
+					.sigs()
+					.filter((s) => s.solar_system_id === originSolarSystemId)
+					.map((s) => this.holeFor(s, catalog))
+					.filter((h): h is ScannedHole => h !== null),
+			}),
 		});
+	}
+
+	/**
+	 * The alias for a prompt once the pilot has said which signature they flew. The first
+	 * suggestion is made before that is known, and under the echo scheme the answer
+	 * depends on it: the same jump out of home is `a5s` through the static and `b5a`
+	 * through a wandering hole of the same class.
+	 */
+	suggestAliasForSignature(prompt: JumpPrompt, signature: Signature | null): string | null {
+		return this.suggestAliasFor(
+			prompt.origin,
+			{ classId: prompt.targetClassId, security: prompt.targetSecurity },
+			prompt.existing,
+			this.holeFor(signature, prompt.catalog),
+			prompt.catalog,
+		);
 	}
 
 	/** The first free slot beside the system jumped from. */

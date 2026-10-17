@@ -41,6 +41,10 @@
 	);
 	/* svelte-ignore state_referenced_locally */
 	let alias = $state(prompt.suggestedAlias ?? '');
+	// What the form last suggested, so a re-ask only overwrites its own guess and never a
+	// name the pilot typed.
+	/* svelte-ignore state_referenced_locally */
+	let suggested = $state<string | null>(prompt.suggestedAlias);
 	let time = $state<TimeStatus>('stable');
 	let mass = $state<MassStatus>('stable');
 	let size = $state<WormholeSize | 'auto'>('auto');
@@ -65,7 +69,20 @@
 		const signature = chosen;
 		if (!signature) return;
 		const named = prompt.ghostAliases.get(signature.id);
-		if (named) alias = named;
+		if (named) {
+			alias = named;
+		} else {
+			// The first suggestion was made before anyone said which hole this was. Under
+			// the echo scheme that answer changes the name -- home's static takes the `s`
+			// slot and a wandering hole of the same class does not -- so ask again now
+			// that it is known. An untouched suggestion is replaced; a name typed by hand
+			// stays.
+			const again = tracker.suggestAliasForSignature(prompt, signature);
+			if (again && alias === (suggested ?? '')) {
+				alias = again;
+				suggested = again;
+			}
+		}
 		if (signature.time_status && signature.time_status !== 'stable') time = signature.time_status;
 		if (signature.mass_status && signature.mass_status !== 'stable') mass = signature.mass_status;
 		if (!lockedSize && signature.size) size = signature.size;
