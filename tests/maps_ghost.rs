@@ -378,7 +378,8 @@ async fn undoing_a_resolve_drops_a_pin_set_since(pool: PgPool) {
 async fn a_pasted_scan_raises_the_holes_it_found(pool: PgPool) {
     let w = world(&pool).await;
     let home = place(&pool, w.owner, w.map_id, SYS_A).await;
-    // Off by default: a scan changes nothing but the signature list.
+    // Every map raises them, whether or not it draws them: a hole with no node has
+    // nowhere to carry the name the chain knows it by.
     paste_signatures(
         &pool,
         w.owner,
@@ -398,7 +399,7 @@ async fn a_pasted_scan_raises_the_holes_it_found(pool: PgPool) {
     let view = get_map(&pool, w.owner, GetMap { map_id: w.map_id })
         .await
         .unwrap();
-    assert_eq!(view.systems.len(), 1);
+    assert_eq!(view.systems.len(), 2, "the hole it found is raised");
 
     sqlx::query("update maps set ghost_unlinked_wormholes = true where id = $1")
         .bind(w.map_id)
@@ -470,8 +471,13 @@ async fn a_pasted_scan_raises_the_holes_it_found(pool: PgPool) {
     let view = get_map(&pool, w.owner, GetMap { map_id: w.map_id })
         .await
         .unwrap();
-    assert_eq!(view.systems.len(), 1, "the paste's nodes went with it");
-    assert!(view.connections.is_empty());
+    // The first paste's node stays: only the second paste was undone.
+    assert_eq!(
+        view.systems.len(),
+        2,
+        "the second paste's nodes went with it"
+    );
+    assert_eq!(view.connections.len(), 1);
 }
 
 #[sqlx::test]
@@ -974,29 +980,39 @@ async fn unassigning_the_far_side_draws_the_hole_again(pool: PgPool) {
     assert_eq!(edge.from_system, home);
 }
 
-/// Drawing unmapped holes is a map setting, and flipping it takes effect there and then.
+/// Whether the map draws unmapped holes is a setting the client honours; the nodes
+/// themselves are not created and destroyed with it. A hole with no node has nowhere to
+/// carry the name the chain knows it by, so every map raises them and the setting says
+/// who sees them.
 #[sqlx::test]
-async fn the_setting_draws_and_undraws_the_holes_already_scanned(pool: PgPool) {
+async fn the_holes_are_raised_whether_or_not_the_map_draws_them(pool: PgPool) {
     let w = world(&pool).await;
     place(&pool, w.owner, w.map_id, SYS_A).await;
     let sig = scan(&pool, w.owner, w.map_id, SYS_A, "ABC-123").await;
-    let view = get_map(&pool, w.owner, GetMap { map_id: w.map_id })
-        .await
-        .unwrap();
-    assert_eq!(view.systems.len(), 1, "off: a scan is only a scan");
+
+    let settled = |view: wormholesystems::maps::MapView| {
+        let ghosts = view
+            .systems
+            .iter()
+            .filter(|s| s.solar_system_id().is_none())
+            .count();
+        (view.systems.len(), view.connections.len(), ghosts)
+    };
+
+    let before = settled(
+        get_map(&pool, w.owner, GetMap { map_id: w.map_id })
+            .await
+            .unwrap(),
+    );
+    assert_eq!(before, (2, 1, 1), "off: the hole is raised all the same");
 
     ghosting(&pool, w.owner, w.map_id).await;
-    let view = get_map(&pool, w.owner, GetMap { map_id: w.map_id })
-        .await
-        .unwrap();
-    assert_eq!(
-        view.systems.len(),
-        2,
-        "on: the hole scanned earlier is drawn"
+    let on = settled(
+        get_map(&pool, w.owner, GetMap { map_id: w.map_id })
+            .await
+            .unwrap(),
     );
-    assert_eq!(view.connections.len(), 1);
-    let sigs = list_signatures(&pool, w.owner, w.map_id).await.unwrap();
-    assert!(sigs[0].connection_id.is_some());
+    assert_eq!(on, before, "on: the same node, now drawn");
 
     update_map(
         &pool,
@@ -1010,16 +1026,21 @@ async fn the_setting_draws_and_undraws_the_holes_already_scanned(pool: PgPool) {
     .await
     .unwrap();
 
-    // Off again: the nodes go, and the scans they were drawn from stay.
-    let view = get_map(&pool, w.owner, GetMap { map_id: w.map_id })
-        .await
-        .unwrap();
-    assert_eq!(view.systems.len(), 1);
-    assert!(view.connections.is_empty());
+    let off = settled(
+        get_map(&pool, w.owner, GetMap { map_id: w.map_id })
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        off, before,
+        "off again: still there, for the client to hide"
+    );
+
+    // The scan is untouched throughout, and stays linked to the node raised for it.
     let sigs = list_signatures(&pool, w.owner, w.map_id).await.unwrap();
     assert_eq!(sigs.len(), 1);
     assert_eq!(sigs[0].id, sig);
-    assert_eq!(sigs[0].connection_id, None);
+    assert!(sigs[0].connection_id.is_some());
 }
 
 /// Everything an open client has seen so far on this map's channel.
@@ -1039,10 +1060,9 @@ async fn the_setting_announces_and_records_the_nodes_it_changes(pool: PgPool) {
 
     ghosting(&pool, w.owner, w.map_id).await;
     let ghost = ghost_for(&pool, w.map_id, sig).await;
-    assert!(seen(&mut events).contains(&MapEvent::SystemAdded {
-        map_id: w.map_id,
-        map_solar_system_id: ghost,
-    }));
+    // The node was already there, so nothing is added or removed. What open clients get
+    // is the map itself changing, which is their cue to look again at what it draws.
+    assert!(seen(&mut events).contains(&MapEvent::MapUpdated { map_id: w.map_id }));
     let history = list_history(&pool, w.owner, w.map_id).await.unwrap();
     let newest = &history.entries[0];
     assert_eq!(newest.kind, "map.ghosts");
@@ -1060,10 +1080,9 @@ async fn the_setting_announces_and_records_the_nodes_it_changes(pool: PgPool) {
     )
     .await
     .unwrap();
-    assert!(seen(&mut events).contains(&MapEvent::SystemRemoved {
-        map_id: w.map_id,
-        map_solar_system_id: ghost,
-    }));
+    assert!(seen(&mut events).contains(&MapEvent::MapUpdated { map_id: w.map_id }));
+    // Taken off the map, not out of it: the node stays for the name it carries.
+    assert_eq!(ghost_for(&pool, w.map_id, sig).await, ghost);
     let history = list_history(&pool, w.owner, w.map_id).await.unwrap();
     assert_eq!(
         history.entries[0].label,
@@ -1104,8 +1123,17 @@ async fn the_setting_announces_and_records_the_nodes_it_changes(pool: PgPool) {
     let view = get_map(&pool, w.owner, GetMap { map_id: w.map_id })
         .await
         .unwrap();
-    assert_eq!(view.systems.len(), 1);
-    assert_eq!(view.systems[0].id(), home);
+    // The placement is back, and so is the scan, so the node that scan is owed is back
+    // with it.
+    assert_eq!(view.systems.len(), 2);
+    assert!(view.systems.iter().any(|s| s.id() == home));
+    assert_eq!(
+        view.systems
+            .iter()
+            .filter(|s| s.solar_system_id().is_none())
+            .count(),
+        1
+    );
     assert_eq!(
         list_signatures(&pool, w.owner, w.map_id).await.unwrap()[0].id,
         sig

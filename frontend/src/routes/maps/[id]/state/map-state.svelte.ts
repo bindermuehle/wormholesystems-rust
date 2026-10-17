@@ -194,6 +194,19 @@ export class MapState {
 	private systemsView = $derived(this.data?.systems ?? []);
 	private connectionsView = $derived(this.data?.connections ?? []);
 	private systemsById = $derived(new Map(this.systemsView.map((s) => [s.id, s])));
+
+	/**
+	 * What the map draws. Every scanned hole is raised as a ghost whatever the map's
+	 * setting, because a name belongs to a placement; `ghost_unlinked_wormholes` decides
+	 * who sees them. The canvas and the layout read this, so a hidden ghost takes up no
+	 * room and its edges are skipped for want of a position. The signature list reads
+	 * `systemsView`, which is why a hole still has a name to show while hidden.
+	 */
+	private visibleSystems = $derived(
+		this.data?.map.ghost_unlinked_wormholes === false
+			? this.systemsView.filter((s) => s.kind !== 'ghost')
+			: this.systemsView,
+	);
 	private connectionsById = $derived(new Map(this.connectionsView.map((c) => [c.id, c])));
 	activeSystem = $derived(this.systemsView.find((s) => s.id === this.activeId) ?? null);
 	routeOrigin = $derived.by(() =>
@@ -235,7 +248,7 @@ export class MapState {
 	 * does not rerun.
 	 */
 	private treeShape = $derived(
-		this.layout === 'tree' ? treeShapeKey(this.systemsView, this.connectionsView) : null,
+		this.layout === 'tree' ? treeShapeKey(this.visibleSystems, this.connectionsView) : null,
 	);
 
 	/** Derived from the shape of the chain, recomputed only when that shape changes. */
@@ -248,10 +261,10 @@ export class MapState {
 			const systems = new Map(this.systemsView.map((s) => [s.id, s]));
 			return computeTreeLayout(
 				{
-					nodeIds: this.systemsView.map((s) => s.id),
+					nodeIds: this.visibleSystems.map((s) => s.id),
 					edges: this.connectionsView.map((c) => ({ from: c.from_system, to: c.to_system })),
-					rootIds: this.systemsView.filter((s) => s.is_pinned).map((s) => s.id),
-					homeId: this.systemsView.find((s) => s.is_home)?.id ?? null,
+					rootIds: this.visibleSystems.filter((s) => s.is_pinned).map((s) => s.id),
+					homeId: this.visibleSystems.find((s) => s.is_home)?.id ?? null,
 					fallbackRootId: null,
 					compareNodes: compareForTree(systems),
 				},
@@ -322,6 +335,7 @@ export class MapState {
 			mapId,
 			camera: this.camera,
 			all: () => this.systemsView,
+			visible: () => this.visibleSystems,
 			byId: () => this.systemsById,
 			orphaned: () => this.orphaned,
 			grid: () => this.grid,

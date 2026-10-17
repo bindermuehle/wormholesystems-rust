@@ -13,7 +13,7 @@ export function hoverSystem(
 	const placed =
 		targetSolarSystemId === null
 			? undefined
-			: map.systems.all.find((s) => solarSystemId(s) === targetSolarSystemId);
+			: map.systems.visible.find((s) => solarSystemId(s) === targetSolarSystemId);
 	map.hoveredSystemId = placed?.id ?? null;
 	map.route.hoverPath = route?.route.map((s) => s.id) ?? null;
 }

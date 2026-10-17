@@ -39,7 +39,8 @@ function fakeHost(systems: MapSystemView[], over: Partial<GestureHost> = {}) {
 	const connect = vi.fn();
 	const host: GestureHost = {
 		camera,
-		systems: { all: systems, move },
+		// Nothing here is hidden, so the two lists are the same list.
+		systems: { all: systems, visible: systems, move },
 		positions: new Map(systems.map((s) => [s.id, { x: s.position_x, y: s.position_y }])),
 		nodeH: 40,
 		grid: GRID,

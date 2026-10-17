@@ -629,10 +629,14 @@ async fn expiry_purges_stale_unlinked_signatures(pool: PgPool) {
     let pairs = expire_signatures(&pool).await.unwrap();
     assert_eq!(pairs, vec![(w.map_id, SYS_A)]);
 
+    // A scanned hole is drawn as a ghost and so is linked, which this sweep leaves alone.
+    // It is not left behind: the ghost's connection expires on its own clock and takes the
+    // node, and the scan that raised it, with it.
     assert!(
         sig_by_id(&pool, w.owner, w.map_id, "WHX-OLD")
             .await
-            .is_none()
+            .is_some(),
+        "the stale hole waits for its connection to expire"
     );
     assert!(
         sig_by_id(&pool, w.owner, w.map_id, "SIT-OLD")

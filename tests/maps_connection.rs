@@ -182,19 +182,34 @@ async fn remove_connection_clears_signature_link(pool: PgPool) {
     .await
     .unwrap();
 
-    // The signature survives, with its connection_id cleared.
+    // The signature survives. It does not come back unlinked: a wormhole signature with
+    // nowhere to lead is owed a ghost, so reconciliation draws one and links it there.
     let total: i64 = sqlx::query_scalar("select count(*) from signatures where map_id = $1")
         .bind(w.map_id)
         .fetch_one(&pool)
         .await
         .unwrap();
-    let linked: i64 =
-        sqlx::query_scalar("select count(*) from signatures where connection_id is not null")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
     assert_eq!(total, 1);
-    assert_eq!(linked, 0);
+
+    let far: Option<Option<i64>> = sqlx::query_scalar(
+        "select p.solar_system_id
+         from signatures s
+         join map_connections c on c.id = s.connection_id
+         join map_solar_systems here
+           on here.map_id = s.map_id and here.solar_system_id = s.solar_system_id
+         join map_solar_systems p
+           on p.id = case when c.from_system = here.id then c.to_system else c.from_system end
+         where s.map_id = $1",
+    )
+    .bind(w.map_id)
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        far,
+        Some(None),
+        "the signature points at a ghost, which has no solar system"
+    );
 
     // Unknown connection → NotFound.
     assert!(matches!(
@@ -630,7 +645,16 @@ async fn expiry_removes_dead_wormholes_and_what_they_strand(pool: PgPool) {
             .fetch_all(&pool)
             .await
             .unwrap();
-    assert_eq!(left, vec![gate, young]);
+    assert!(!left.contains(&dead), "the expired hole is gone");
+    assert!(
+        left.contains(&gate) && left.contains(&young),
+        "the stargate and the young hole stay"
+    );
+    assert_eq!(
+        left.len(),
+        3,
+        "plus the connection to the ghost raised for the signature the expiry stranded"
+    );
     let placed: Vec<i64> =
         sqlx::query_scalar("select id from map_solar_systems where map_id = $1 order by id")
             .bind(w.map_id)
@@ -638,10 +662,22 @@ async fn expiry_removes_dead_wormholes_and_what_they_strand(pool: PgPool) {
             .await
             .unwrap();
     assert_eq!(
-        placed,
-        vec![a, b, c],
+        placed[..3],
+        [a, b, c],
         "the stranded J-system goes, the pinned one stays"
     );
+
+    // The signature outlives the hole that expired, so it is owed a ghost and gets one:
+    // a fourth placement with no solar system, and the signature linked to it.
+    let ghosts: Vec<i64> = sqlx::query_scalar(
+        "select id from map_solar_systems where map_id = $1 and solar_system_id is null",
+    )
+    .bind(w.map_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(placed.len(), 4);
+    assert_eq!(ghosts.len(), 1);
 
     let link: Option<i64> =
         sqlx::query_scalar("select connection_id from signatures where id = $1")
@@ -649,7 +685,7 @@ async fn expiry_removes_dead_wormholes_and_what_they_strand(pool: PgPool) {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(link, None);
+    assert!(link.is_some(), "relinked to the ghost raised for it");
 
     let newest = list_history(&pool, w.owner, w.map_id)
         .await

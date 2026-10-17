@@ -264,7 +264,18 @@ async fn undo_restores_a_removed_system_with_its_edges_and_signatures(pool: PgPo
     step_back(&pool, w.owner, w.map_id).await;
 
     let after = systems(&pool, w.owner, w.map_id).await;
-    assert_eq!(after.len(), 2);
+    // A and B, plus the ghost owed to B's wormhole signature: the undo brings the
+    // signature back, and a wormhole signature with nowhere to lead is owed one. It was
+    // there before the removal too, and went with the signature.
+    assert_eq!(after.len(), 3);
+    assert_eq!(
+        after
+            .iter()
+            .filter(|s| s.solar_system_id().is_none())
+            .count(),
+        1,
+        "one ghost, for the restored signature"
+    );
     // The placement keeps its id, so anything referencing it still resolves.
     assert_eq!(
         after
@@ -276,8 +287,8 @@ async fn undo_restores_a_removed_system_with_its_edges_and_signatures(pool: PgPo
     );
     assert_eq!(
         connections(&pool, w.owner, w.map_id).await.len(),
-        1,
-        "the cascading edge comes back too"
+        2,
+        "the cascading edge comes back too, alongside the ghost's own"
     );
     let sigs = list_signatures(&pool, w.owner, w.map_id).await.unwrap();
     assert_eq!(sigs.len(), 1);
@@ -288,7 +299,8 @@ async fn undo_restores_a_removed_system_with_its_edges_and_signatures(pool: PgPo
     assert_eq!(systems(&pool, w.owner, w.map_id).await.len(), 1);
     step_back(&pool, w.owner, w.map_id).await;
     let after = systems(&pool, w.owner, w.map_id).await;
-    assert_eq!(after.len(), 2);
+    // A, B and the ghost B's signature is owed, as after the first undo.
+    assert_eq!(after.len(), 3);
     assert_eq!(
         after
             .iter()

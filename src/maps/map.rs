@@ -313,6 +313,10 @@ pub async fn update_map(pool: &PgPool, actor: Actor, cmd: UpdateMap) -> Result<M
         .ok_or(MapError::NotFound)?
     );
 
+    // What the map drew before this command, for the history note below. Read here
+    // because `current` is taken apart to build the update.
+    let drew_ghosts_before = current.ghost_unlinked_wormholes;
+
     let name = match cmd.name {
         Some(name) => name.trim().to_string(),
         None => current.name,
@@ -357,12 +361,16 @@ pub async fn update_map(pool: &PgPool, actor: Actor, cmd: UpdateMap) -> Result<M
         .await?
     );
     tx.emit(MapEvent::MapUpdated { map_id: cmd.map_id });
-    // Drawing unmapped holes is a map setting, so turning it on draws the holes already
-    // scanned and turning it off takes those nodes away, rather than waiting for the next
-    // scan to notice. The nodes are a change to the chain like any other, so they go in the
-    // history, but only for the record: undo moves through commands, and a settings change
-    // is not one, so stepping back over it would bring the nodes back against the setting.
-    if !tx.reconcile_ghosts().await?.is_empty() {
+    tx.reconcile_ghosts().await?;
+    // Drawing unmapped holes is a map setting, and flipping it draws or takes away every
+    // hole already scanned. The nodes themselves are not created and destroyed with it --
+    // a hole with no node has nowhere to carry its name, so every map raises them -- but
+    // what people see change is a change to the chain like any other, so it goes in the
+    // history. `MapUpdated` above is what tells open clients to look again.
+    //
+    // For the record only: undo moves through commands, and a settings change is not one,
+    // so stepping back over it would fight the setting.
+    if drew_ghosts_before != map.ghost_unlinked_wormholes {
         let label = if map.ghost_unlinked_wormholes {
             "drew the unmapped holes"
         } else {

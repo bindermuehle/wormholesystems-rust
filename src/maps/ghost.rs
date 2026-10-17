@@ -72,8 +72,14 @@ pub(super) fn free_position(placed: &[(f64, f64)], base: (f64, f64)) -> (f64, f6
 
 /// Bring the map's ghosts back in line with its scans. A ghost is owed to every wormhole
 /// signature that has nowhere to lead yet, and owed to nothing else: not to a signature
-/// that has been deleted, retyped or unlinked, not to one whose far side has since been
-/// removed, and not at all on a map that has asked for no ghosts.
+/// that has been deleted, retyped or unlinked, and not to one whose far side has since
+/// been removed.
+///
+/// Every map gets them, including one whose `ghost_unlinked_wormholes` is off. An alias
+/// belongs to a placement, so a hole with no node has nowhere to carry the name the chain
+/// knows it by, and under the echo scheme that name is the point of scanning it. The
+/// setting says whether the node is *drawn*, which is what its label claims; the frontend
+/// leaves hidden ghosts out of the layout and the canvas.
 ///
 /// Running this after every command is what makes that hold however the map was changed,
 /// rather than only on the handful of writes that remember to. Returns the undo steps for
@@ -84,13 +90,11 @@ pub(super) async fn reconcile(
     tx: &mut Tx<'_>,
     map_id: i64,
 ) -> Result<(Vec<MapCommand>, Vec<MapEvent>)> {
-    let wanted = sqlx::query_scalar!(
-        "select ghost_unlinked_wormholes from maps where id = $1",
-        map_id,
-    )
-    .fetch_optional(&mut **tx)
-    .await?
-    .unwrap_or(false);
+    // The map still has to exist; a command against one that does not owes it nothing.
+    let wanted = sqlx::query_scalar!("select id from maps where id = $1", map_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .is_some();
 
     let mut undo = Vec::new();
     let mut events = Vec::new();

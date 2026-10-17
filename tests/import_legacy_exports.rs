@@ -2,9 +2,15 @@
 //! Scratch tooling, not CI — it writes to whatever DATABASE_URL points at and skips when
 //! the folder is missing. Run with: cargo test --test import_legacy_exports -- --nocapture
 use wormholesystems::allowlist::AffiliationAllowlist;
-use wormholesystems::maps::transfer::{SectionSet, import_map_as_new, parse_export};
 use wormholesystems::maps::Actor;
+use wormholesystems::maps::transfer::{SectionSet, import_map_as_new, parse_export};
 
+// Ignored: it writes to whatever DATABASE_URL points at, and every map it reads becomes a
+// new map owned by whoever is signed in. Left in the suite it ran on each `cargo test` and
+// imported the lot again, which is how one set of fourteen maps became forty-two.
+// Run it deliberately:
+//     cargo test --test import_legacy_exports -- --ignored --nocapture
+#[ignore = "writes to the dev database; run it on purpose"]
 #[tokio::test]
 async fn import_legacy_exports() {
     let dir = std::path::Path::new(env!("HOME")).join("wh-exports/echo");
@@ -22,7 +28,10 @@ async fn import_legacy_exports() {
     .fetch_one(&pool)
     .await
     .expect("no user — sign in at http://localhost:5173 first");
-    let actor = Actor { user_id: row.0, character_id: row.1 };
+    let actor = Actor {
+        user_id: row.0,
+        character_id: row.1,
+    };
 
     // What the migration is for: the map, who may see it, the occupier details and the
     // home system. Signatures are deliberately left out — holes roll, the data is stale

@@ -17,7 +17,7 @@ export function syncDeepLink(map: MapState): void {
 		if (applied || !map.loaded) return;
 		applied = true;
 		if (map.activeId === null) {
-			map.activeId = deepLinkTarget(map.systems.all, page.url.searchParams.get('system'));
+			map.activeId = deepLinkTarget(map.systems.visible, page.url.searchParams.get('system'));
 		}
 	});
 

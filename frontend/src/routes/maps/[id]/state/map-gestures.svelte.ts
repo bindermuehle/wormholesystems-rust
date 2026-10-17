@@ -20,6 +20,8 @@ export interface GestureHost {
 	camera: MapCamera;
 	systems: {
 		readonly all: MapSystemView[];
+		/** What the map draws: gestures act on what is on screen, not on what exists. */
+		readonly visible: MapSystemView[];
 		move(moves: { map_solar_system_id: number; x: number; y: number }[]): void;
 	};
 	readonly positions: Map<number, Vec2>;
@@ -54,7 +56,7 @@ export class MapGestures {
 		const b = map.band;
 		if (!b) return;
 		// Rendered positions, not stored ones: an automatic layout draws nodes elsewhere.
-		const nodes = map.systems.all.map((s) => ({
+		const nodes = map.systems.visible.map((s) => ({
 			id: s.id,
 			...(map.positions.get(s.id) ?? { x: s.position_x, y: s.position_y }),
 		}));
@@ -148,10 +150,10 @@ export class MapGestures {
 			const l = map.linking;
 			map.linking = null;
 			const w = map.camera.toWorld(ev.clientX, ev.clientY);
-			const target = nodeAt(map.systems.all, w.x, w.y, map.grid, map.positions);
+			const target = nodeAt(map.systems.visible, w.x, w.y, map.grid, map.positions);
 			// Dropping onto a ghost is the same claim from the other end, so it is no more
 			// allowed than starting from one.
-			const ghost = map.systems.all.some((s) => s.id === target && s.kind === 'ghost');
+			const ghost = map.systems.visible.some((s) => s.id === target && s.kind === 'ghost');
 			if (target !== null && target !== l.from && !ghost) {
 				map.connections.add(l.from, target);
 			}
@@ -205,7 +207,12 @@ export class MapGestures {
 		map.closeMenu();
 
 		const cur = map.positions.get(s.id) ?? { x: s.position_x, y: s.position_y };
-		const members = dragMembers({ id: s.id, at: cur }, map.selected, map.systems.all, map.pending);
+		const members = dragMembers(
+			{ id: s.id, at: cur },
+			map.selected,
+			map.systems.visible,
+			map.pending,
+		);
 
 		if (!map.selected.has(s.id)) map.selected = new Set();
 		if (s.is_pinned) return;

@@ -15,6 +15,8 @@ export interface SystemsHost {
 	mapId: number;
 	camera: MapCamera;
 	all(): MapSystemView[];
+	/** The ones the map draws: everything, less the ghosts when the map hides them. */
+	visible(): MapSystemView[];
 	byId(): ReadonlyMap<number, MapSystemView>;
 	/** The placements nothing connects back to the rest of the chain. */
 	orphaned(): MapSystemView[];
@@ -35,6 +37,17 @@ export class SystemsApi {
 	/** Every node on the map, ghosts included. */
 	get all(): MapSystemView[] {
 		return this.host.all();
+	}
+
+	/**
+	 * The nodes the map draws. A ghost is raised for every scanned hole whether or not the
+	 * map shows them, because an alias belongs to a placement and a hole with no node has
+	 * nowhere to carry the name the chain knows it by. `ghost_unlinked_wormholes` says
+	 * whether anyone sees them, so the canvas and the layout read this and the signature
+	 * list reads `all`.
+	 */
+	get visible(): MapSystemView[] {
+		return this.host.visible();
 	}
 
 	/** Every node by placement id, built once per graph. */

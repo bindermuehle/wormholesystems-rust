@@ -259,7 +259,9 @@
 			<!-- One tooltip provider for every node's icons rather than one per node. -->
 			<Tooltip.Provider delayDuration={500}>
 				<!-- Keyed by id so a refetch diffs in place. -->
-				{#each map.systems.all as s (s.id)}
+				<!-- What the map draws: a hidden ghost still exists, and still carries the
+				     name its signature row shows. -->
+				{#each map.systems.visible as s (s.id)}
 					<SystemNode
 						node={s}
 						nodeH={map.nodeH}
