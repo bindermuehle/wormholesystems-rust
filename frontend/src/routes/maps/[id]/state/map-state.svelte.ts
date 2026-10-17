@@ -306,7 +306,10 @@ export class MapState {
 	// their coordinates do, so only the nodes and edges that moved redraw.
 	positions = $derived.by(() => {
 		const dragged = this.drag ? draggedPositions(this.drag) : new Map<number, Vec2>();
-		const out = nodePositions(this.systemsView, this.treePositions, dragged, this.pending);
+		// What is drawn gets a position, and only that: an edge to a node nobody can see
+		// would otherwise be routed to the empty grid where it sits, which is how a hidden
+		// ghost showed up as a line to nowhere.
+		const out = nodePositions(this.visibleSystems, this.treePositions, dragged, this.pending);
 		const next = reusePositions(out, this.lastPositions);
 		this.lastPositions = next;
 		return next;
