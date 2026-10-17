@@ -99,3 +99,42 @@ export function echoContextFor(input: {
 		homeStaticCount: staticCodes.length,
 	};
 }
+
+/**
+ * The neighbour one hop closer to home: this system's parent in the breadth-first tree
+ * rooted at home. The hole leading to it is the way back, which the signature list marks
+ * with a `+`. Null when there is no home, the system is home, or nothing connects them.
+ */
+export function parentTowardHome(
+	homeSystemId: number | null,
+	systemId: number,
+	connections: readonly MapConnection[],
+): number | null {
+	if (homeSystemId === null || homeSystemId === systemId) return null;
+
+	const neighbours = new Map<number, number[]>();
+	const link = (from: number, to: number) => {
+		const seen = neighbours.get(from);
+		if (seen) seen.push(to);
+		else neighbours.set(from, [to]);
+	};
+	for (const connection of connections) {
+		link(connection.from_system, connection.to_system);
+		link(connection.to_system, connection.from_system);
+	}
+
+	const parent = new Map<number, number>();
+	const seen = new Set<number>([homeSystemId]);
+	const queue = [homeSystemId];
+	while (queue.length > 0) {
+		const current = queue.shift()!;
+		if (current === systemId) return parent.get(current) ?? null;
+		for (const next of neighbours.get(current) ?? []) {
+			if (seen.has(next)) continue;
+			seen.add(next);
+			parent.set(next, current);
+			queue.push(next);
+		}
+	}
+	return null;
+}

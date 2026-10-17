@@ -35,3 +35,6 @@ test-results/
 # Personal dev tooling
 /solo.yml
 .claude/worktrees/
+
+# Python bytecode from the migration helpers.
+__pycache__/

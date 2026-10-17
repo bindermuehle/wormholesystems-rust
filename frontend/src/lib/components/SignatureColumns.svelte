@@ -13,8 +13,11 @@
 		compact = false,
 		sort,
 		onsort,
+		showAlias = false,
 	}: {
 		compact?: boolean;
+		/** The echo scheme names every hole, so the list shows the name. */
+		showAlias?: boolean;
 		sort?: { column: SortColumn; direction: 'asc' | 'desc' };
 		/** Omitted where the header is not sortable, which leaves the arrows off. */
 		onsort?: (column: SortColumn) => void;
@@ -30,6 +33,9 @@
 	<SortHeader column="category" {sort} {onsort} class="w-20 shrink-0">Cat</SortHeader>
 	<SortHeader column="type" {sort} {onsort} class="min-w-0 flex-1">Type</SortHeader>
 	<span class="min-w-0 flex-1">Conn</span>
+	{#if showAlias}
+		<span class="w-16 shrink-0">Alias</span>
+	{/if}
 	<SortHeader column="age" {sort} {onsort} class="w-10 shrink-0 justify-end">Age</SortHeader>
 	<span class="w-12 shrink-0"></span>
 </div>

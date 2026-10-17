@@ -48,6 +48,7 @@
 	import { deletedByPaste, pasteStatus } from '$lib/signatures/paste-diff';
 	import SignatureColumns, { SORT_COLUMNS } from '$lib/components/SignatureColumns.svelte';
 	import SignatureRow from '$lib/components/SignatureRow.svelte';
+	import { echoSuggestions, type RowAlias } from '$lib/naming/echo-suggestions';
 	import SignaturesPastedAt from './SignaturesPastedAt.svelte';
 	import { solarSystemId, systemName } from '$lib/map/system';
 
@@ -72,6 +73,26 @@
 	// paste box that the server would refuse.
 	const systemId = $derived(solarSystemId(system));
 	const canWrite = $derived(map.canWrite && systemId !== null);
+
+	// The echo scheme names every hole after what it leads to, so the list shows the name.
+	// The other two name a system when it is placed, and have nothing to say about a hole
+	// nobody has flown, so the column stays off and those maps keep the layout they had.
+	const showAlias = $derived(map.naming?.alias_scheme === 'echo');
+
+	// Worked out for the whole list at once: each suggestion takes a slot the next one
+	// must not reuse, which a row deciding on its own cannot know.
+	const rowAliases = $derived.by(() => {
+		// A ghost has nothing scanned in it, so there is nothing to name.
+		if (!showAlias || !catalog || systemId === null) return new Map<number, RowAlias>();
+		return echoSuggestions({
+			systems: ctx.systems,
+			connections: ctx.connections,
+			system,
+			sigs: ctx.sigs.filter((sig) => sig.solar_system_id === systemId),
+			catalog,
+			ignoredAlias: map.naming?.ignored_alias,
+		});
+	});
 	const compact = $derived(map.userSettings?.compact_signature_list ?? false);
 	const targetLabel = $derived.by(() => {
 		const name = systemName(system);
@@ -476,7 +497,7 @@
 			</div>
 		{:else}
 			<Tooltip.Provider delayDuration={300}>
-				<SignatureColumns {compact} sort={sort.current} onsort={sort.toggle} />
+				<SignatureColumns {compact} sort={sort.current} onsort={sort.toggle} {showAlias} />
 
 				{#if creating}
 					<div
@@ -519,6 +540,8 @@
 							{compact}
 							{canWrite}
 							{showStaticsFirst}
+							{showAlias}
+							rowAlias={rowAliases.get(sig.id) ?? null}
 							status={rowStatus(sig)}
 							now={clock.current}
 						/>

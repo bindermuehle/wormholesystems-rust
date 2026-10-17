@@ -24,6 +24,7 @@
 	import { CATEGORIES, categoryMeta, typeById } from '$lib/map/signatures';
 	import type { SignatureContext, SignaturePatch } from '$lib/map/signature-context';
 	import { echoContextFor, type ScannedHole } from '$lib/naming/echo-context';
+	import type { RowAlias } from '$lib/naming/echo-suggestions';
 	import ConnectionInput from './signature-row/ConnectionInput.svelte';
 	import TimeDetails from './signature-row/TimeDetails.svelte';
 	import TypeInput from './signature-row/TypeInput.svelte';
@@ -38,6 +39,8 @@
 		showStaticsFirst,
 		status,
 		now,
+		rowAlias = null,
+		showAlias = false,
 	}: {
 		ctx: SignatureContext;
 		system: MappedSystem;
@@ -49,6 +52,17 @@
 		status: 'new' | 'updated' | 'deleted' | null;
 		/** Epoch ms from the panel's shared clock. */
 		now: number;
+		/**
+		 * The name this hole leads to, worked out for the whole list at once because each
+		 * suggestion takes a slot the next one must not reuse. Null off the echo scheme,
+		 * which leaves the column out.
+		 */
+		rowAlias?: RowAlias | null;
+		/**
+		 * Whether the list is showing the column at all. Separate from `rowAlias` so a row
+		 * with no name still holds the width and the columns line up.
+		 */
+		showAlias?: boolean;
 	} = $props();
 
 	const isWormhole = $derived(sig.group === 'wormhole');
@@ -66,6 +80,80 @@
 	});
 	/** The far end once it is a system: a hole nobody has been through has none of this. */
 	const linkedSystem = $derived(linkedTarget?.kind === 'system' ? linkedTarget : null);
+
+	// A name lives on a placement, so a hole with no far end has nowhere to keep one. With
+	// `ghost_unlinked_wormholes` off a scanned hole nobody has flown has no node at all,
+	// and its name stays a suggestion until the hole is linked.
+	const aliasWritable = $derived(canWrite && linkedTarget !== null);
+	const aliasTitle = $derived(
+		!rowAlias
+			? 'Pick a type: the name says what the hole leads to'
+			: !aliasWritable
+				? 'Suggested name. It can be changed once the hole is linked to a system'
+				: rowAlias.settled
+					? 'The name this system has. Click to change it'
+					: 'Suggested name. Click to change it',
+	);
+
+	/**
+	 * Name the hole's ghost as soon as picking a type says what it leads to.
+	 *
+	 * The scheme names a destination by its class, so until the type is picked there is
+	 * nothing to say. That pick is also the right moment to write: it is one person doing
+	 * one thing, where naming from the suggestion as it renders would have every client
+	 * with the map open writing the same names at once.
+	 *
+	 * Only an unnamed ghost is touched. Renaming one that already has a name would undo
+	 * whatever the scout called it, and a class that changes under an existing name is
+	 * their call to make, not ours.
+	 */
+	function nameGhost(typeId: number | null) {
+		if (!showAlias || !canWrite) return;
+		const target = linkedTarget;
+		if (!target || target.alias) return;
+
+		const targetClassId = typeById(catalog, typeId)?.target_class ?? null;
+		if (targetClassId === null) return;
+
+		const alias = suggestAlias({
+			parentAlias: system.alias,
+			targetIsWormhole: isWormholeClass(targetClassId),
+			originIsWormhole: isWormholeClass(system.wormhole_class_id),
+			aliases: ctx.systems.map((s) => s.alias).filter((a): a is string => Boolean(a)),
+			scheme: ctx.naming?.alias_scheme,
+			ignoredAlias: ctx.naming?.ignored_alias,
+			echo: echoContextFor({
+				systems: ctx.systems,
+				connections: ctx.connections,
+				originSystemId: system.id,
+				targetClassId,
+				hole: { ...asHole(sig), code: typeById(catalog, typeId)?.signature ?? null },
+				holesInOrigin: ctx.sigs
+					.filter((other) => other.solar_system_id === sig.solar_system_id)
+					.map(asHole),
+			}),
+		});
+		if (alias) ctx.actions?.setAlias(target, alias);
+	}
+
+	let editingAlias = $state(false);
+	let aliasDraft = $state('');
+	let aliasInput = $state<HTMLInputElement | null>(null);
+
+	function startEditAlias() {
+		if (!aliasWritable || !rowAlias) return;
+		aliasDraft = rowAlias.alias;
+		editingAlias = true;
+		queueMicrotask(() => aliasInput?.select());
+	}
+
+	function saveAlias() {
+		if (!editingAlias) return;
+		editingAlias = false;
+		const next = aliasDraft.trim();
+		if (!linkedTarget || next === rowAlias?.alias) return;
+		ctx.actions?.setAlias(linkedTarget, next);
+	}
 
 	// Inline ID editing: alphanumerics only, uppercased, dash after 3 characters.
 	let editingId = $state(false);
@@ -263,15 +351,59 @@
 			{canWrite}
 			{showStaticsFirst}
 			linkedClass={linkedSystem?.wormhole_class_id ?? null}
-			onpick={(typeId) => update({ signature_type_id: typeId })}
+			onpick={(typeId) => {
+				update({ signature_type_id: typeId });
+				nameGhost(typeId);
+			}}
 		/>
 	</div>
 
-	<!-- Wormhole rows only; on a site the type cell absorbs the column. -->
+	<!-- Wormhole rows only; on a site the type cell absorbs the columns. A site leads
+	     nowhere, so it has neither a connection nor a name for what is on the far side. -->
 	{#if isWormhole}
 		<div class="min-w-0 flex-1">
 			<ConnectionInput {ctx} {system} {sig} {catalog} {compact} {canWrite} />
 		</div>
+
+		{#if showAlias}
+			<div class="w-16 shrink-0">
+				{#if editingAlias}
+					<Input
+						bind:ref={aliasInput}
+						bind:value={aliasDraft}
+						onblur={saveAlias}
+						onkeydown={(e) => {
+							if (e.key === 'Enter') saveAlias();
+							if (e.key === 'Escape') editingAlias = false;
+						}}
+						class="w-full rounded-none border-border/50 bg-background/50 px-1.5 font-mono text-xs {compact
+							? 'h-5'
+							: 'h-6'}"
+						maxlength={8}
+						data-testid="sig-alias-input"
+					/>
+				{:else if rowAlias}
+					<!-- A settled name is what the chain already calls that system; a suggestion is
+					     only what this row would name it, so it reads quieter. -->
+					<button
+						class="flex items-center font-mono text-xs {aliasWritable
+							? 'cursor-pointer hover:text-amber-400'
+							: 'cursor-default'} {rowAlias.settled
+							? 'text-foreground'
+							: 'text-muted-foreground/70'} {compact ? 'h-5' : 'h-6'}"
+						title={aliasTitle}
+						onclick={startEditAlias}
+						data-testid="sig-alias"
+					>
+						{rowAlias.homeward ? '+' : ''}{rowAlias.alias}
+					</button>
+				{:else}
+					<span class="text-muted-foreground/40 {compact ? 'h-5' : 'h-6'}" title={aliasTitle}>
+						&mdash;
+					</span>
+				{/if}
+			</div>
+		{/if}
 	{/if}
 
 	<div class="w-10 shrink-0 text-right">

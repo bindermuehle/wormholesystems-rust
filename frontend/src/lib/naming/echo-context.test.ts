@@ -87,7 +87,7 @@ describe('echoContextFor', () => {
 			holesInOrigin: [],
 		});
 		// 4 hangs off 2, not off home, so its letter is not home's to reuse.
-		expect(ctx.homeBranchLetters.sort()).toEqual(['a', 'b']);
+		expect([...ctx.homeBranchLetters].sort()).toEqual(['a', 'b']);
 	});
 
 	it('ignores a link whose far side has no alias yet', () => {
