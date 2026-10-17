@@ -91,8 +91,10 @@ describe('echoSuggestions', () => {
 		expect(out.get(10)).toEqual({ alias: 'a5s', homeward: false, settled: true });
 	});
 
-	it('marks the hole that leads back toward home', () => {
-		// home(1) -- a5s(2) -- b4a(3); standing in 2, the hole to 1 is the way back.
+	it('names the way home after the hole you came in through', () => {
+		// home(1) -- a5s(2) -- a4a(3); standing in 2, the hole to 1 is the way back, and
+		// it is the a5s hole seen from the other side. Calling it HOME would read the same
+		// on every branch of the chain.
 		const home = system(1, { home: true, alias: 'HOME' });
 		const here = system(2, { alias: 'a5s' });
 		const out = echoSuggestions({
@@ -102,8 +104,8 @@ describe('echoSuggestions', () => {
 			sigs: [sig(10, { type: 1, conn: 50 }), sig(11, { type: 1, conn: 51 })],
 			catalog,
 		});
-		expect(out.get(10)?.homeward).toBe(true);
-		expect(out.get(11)?.homeward).toBe(false);
+		expect(out.get(10)).toEqual({ alias: 'a5s', homeward: true, settled: true });
+		expect(out.get(11)).toEqual({ alias: 'a4a', homeward: false, settled: true });
 	});
 
 	it('suggests a name for a hole drawn as a ghost, which is linked but unnamed', () => {

@@ -36,7 +36,14 @@ function branchLetterOf(alias: string | null | undefined): string | null {
  */
 function isFirstScannedWithCode(hole: ScannedHole, holesInOrigin: readonly ScannedHole[]): boolean {
 	if (hole.code === null) return false;
-	const sameCode = holesInOrigin.filter((other) => other.code === hole.code);
+	// The hole is counted from the argument rather than from the list, because the caller
+	// may know something the list does not yet: naming a hole as its type is picked reads
+	// the new type, while the signatures around it are still the ones the store last
+	// heard about. Without this, the hole being named matches nothing, and a static picked
+	// after its neighbours is not recognised as one.
+	const sameCode = [hole, ...holesInOrigin.filter((other) => other.id !== hole.id)].filter(
+		(other) => other.code === hole.code,
+	);
 	const first = sameCode.reduce((earliest, other) => {
 		if (other.created_at !== earliest.created_at) {
 			return other.created_at < earliest.created_at ? other : earliest;

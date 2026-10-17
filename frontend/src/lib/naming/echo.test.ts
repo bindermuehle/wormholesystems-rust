@@ -3,6 +3,7 @@ import { classMeta } from '$lib/map/classes';
 import { guessNextAlias, suggestAlias } from './alias';
 import {
 	echoTypeChar,
+	isGeneratedAlias,
 	generateEchoAlias,
 	knownWormholeClassIds,
 	nextBranchLetter,
@@ -199,5 +200,18 @@ describe('suggestAlias with the echo scheme', () => {
 			echo: ctx({ targetClassId: 7 }),
 		});
 		expect(alias).toBeNull();
+	});
+});
+
+describe('isGeneratedAlias', () => {
+	it('knows the names this scheme writes', () => {
+		expect(['a5s', 'b3a', 'aDa', 'cHa', 'a13a', 'bPb'].every(isGeneratedAlias)).toBe(true);
+	});
+
+	it('leaves a name somebody typed alone', () => {
+		// A retype corrects what we wrote; it must not overwrite what a scout meant.
+		expect(['HOME', 'DO NOT ROLL', 'Rubicon (XL)', 'ECHOME', ''].some(isGeneratedAlias)).toBe(
+			false,
+		);
 	});
 });

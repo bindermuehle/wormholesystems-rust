@@ -155,3 +155,18 @@ export function knownWormholeClassIds(): number[] {
 	}
 	return ids;
 }
+
+/**
+ * What this scheme produces: a branch letter, the destination's class, a slot letter. The
+ * class is one or two characters (`13` for shattered), and `H`/`L`/`N`/`P`/`T`/`D` stand
+ * for k-space, Pochven, Thera and the drifters.
+ *
+ * Used to tell a name this scheme wrote from one somebody typed, since nothing records
+ * which is which. A name we wrote is ours to correct when the hole turns out to lead
+ * somewhere else; a name that was meant is not.
+ */
+const GENERATED_ALIAS = /^[a-z](?:\d{1,2}|[HLNPTD])[a-z]$/;
+
+export function isGeneratedAlias(alias: string | null | undefined): boolean {
+	return GENERATED_ALIAS.test((alias ?? '').trim());
+}

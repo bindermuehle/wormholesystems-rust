@@ -24,6 +24,7 @@
 	import { CATEGORIES, categoryMeta, typeById } from '$lib/map/signatures';
 	import type { SignatureContext, SignaturePatch } from '$lib/map/signature-context';
 	import { echoContextFor, type ScannedHole } from '$lib/naming/echo-context';
+	import { isGeneratedAlias } from '$lib/naming/echo';
 	import type { RowAlias } from '$lib/naming/echo-suggestions';
 	import ConnectionInput from './signature-row/ConnectionInput.svelte';
 	import TimeDetails from './signature-row/TimeDetails.svelte';
@@ -110,20 +111,31 @@
 	function nameGhost(typeId: number | null) {
 		if (!showAlias || !canWrite) return;
 		const target = linkedTarget;
-		if (!target || target.alias) return;
+		if (!target) return;
+
+		// A name we wrote is ours to correct; one somebody typed is not. There is no flag
+		// saying which is which, so the shape decides: `<branch><type><slot>` is what this
+		// scheme generates, and anything else was meant.
+		const existing = (target.alias ?? '').trim();
+		if (existing && !isGeneratedAlias(existing)) return;
 
 		const targetClassId = typeById(catalog, typeId)?.target_class ?? null;
 		if (targetClassId === null) return;
+
+		// Everything but this hole. Its own name is not taken by anything else, and its own
+		// branch letter is not a branch already spoken for: a C6 retyped to another C6 must
+		// keep `c6a` rather than read its own name as a reason to move to `d`.
+		const others = ctx.systems.filter((s) => s.id !== target.id);
 
 		const alias = suggestAlias({
 			parentAlias: system.alias,
 			targetIsWormhole: isWormholeClass(targetClassId),
 			originIsWormhole: isWormholeClass(system.wormhole_class_id),
-			aliases: ctx.systems.map((s) => s.alias).filter((a): a is string => Boolean(a)),
+			aliases: others.map((s) => s.alias).filter((a): a is string => Boolean(a)),
 			scheme: ctx.naming?.alias_scheme,
 			ignoredAlias: ctx.naming?.ignored_alias,
 			echo: echoContextFor({
-				systems: ctx.systems,
+				systems: others,
 				connections: ctx.connections,
 				originSystemId: system.id,
 				targetClassId,
@@ -133,7 +145,7 @@
 					.map(asHole),
 			}),
 		});
-		if (alias) ctx.actions?.setAlias(target, alias);
+		if (alias && alias !== existing) ctx.actions?.setAlias(target, alias);
 	}
 
 	let editingAlias = $state(false);
@@ -385,13 +397,15 @@
 				{:else if rowAlias}
 					<!-- A settled name is what the chain already calls that system; a suggestion is
 					     only what this row would name it, so it reads quieter. -->
+					<!-- Truncated: a scheme name is three characters, but a system named by hand
+					     ("The Altar", the way home) is as long as somebody felt like. -->
 					<button
-						class="flex items-center font-mono text-xs {aliasWritable
+						class="block w-full truncate text-left font-mono text-xs {aliasWritable
 							? 'cursor-pointer hover:text-amber-400'
 							: 'cursor-default'} {rowAlias.settled
 							? 'text-foreground'
-							: 'text-muted-foreground/70'} {compact ? 'h-5' : 'h-6'}"
-						title={aliasTitle}
+							: 'text-muted-foreground/70'} {compact ? 'h-5 leading-5' : 'h-6 leading-6'}"
+						title="{rowAlias.homeward ? '+' : ''}{rowAlias.alias} — {aliasTitle}"
 						onclick={startEditAlias}
 						data-testid="sig-alias"
 					>

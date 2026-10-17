@@ -161,6 +161,27 @@ describe('echoContextFor', () => {
 		expect(reversed.isHomeStatic).toBe(true);
 	});
 
+	it('recognises a static whose type was only just picked', () => {
+		// Naming a hole as its type is chosen reads the new type, while the signatures
+		// around it are still the ones the store last heard about -- including this hole,
+		// under whatever it was before. The hole itself has to be counted from the
+		// argument, or a static picked after its neighbours reads as a wandering hole and
+		// takes the next branch instead of the `s` slot.
+		const systems = [system(1, { home: true, statics: ['H296'] })];
+		const picked = hole(10, 'H296');
+		const stale = { ...picked, code: null };
+		expect(
+			derive({
+				systems,
+				connections: [],
+				originSystemId: 1,
+				targetClassId: 5,
+				hole: picked,
+				holesInOrigin: [stale, hole(11, 'K162'), hole(12, 'V753')],
+			}).isHomeStatic,
+		).toBe(true);
+	});
+
 	it('is not a static when the code is not one of home’s', () => {
 		const systems = [system(1, { home: true, statics: ['H296'] })];
 		const h = hole(10, 'D382');
@@ -189,6 +210,36 @@ describe('echoContextFor', () => {
 				holesInOrigin: [h],
 			}).isHomeStatic,
 		).toBe(false);
+	});
+	it('does not read a hole\u2019s own branch letter as a branch already taken', () => {
+		// Recomputing a name after a retype asks the same question again. If the hole is
+		// still in the list under its old name, its own letter reads as spoken for and it
+		// moves itself along: c6a becomes d6a on a change that was not even a class change.
+		// The caller leaves it out, and this is what that looks like from here.
+		const home = system(1, { home: true, statics: ['H296'] });
+		const mine = system(3, { alias: 'c6a' });
+		const sibling = system(2, { alias: 'b5a' });
+		const connections = [edge(1, 2), edge(1, 3)];
+
+		const withMine = derive({
+			systems: [home, sibling, mine],
+			connections,
+			originSystemId: 1,
+			targetClassId: 6,
+			hole: null,
+			holesInOrigin: [],
+		});
+		expect([...withMine.homeBranchLetters].sort()).toEqual(['b', 'c']);
+
+		const withoutMine = derive({
+			systems: [home, sibling],
+			connections,
+			originSystemId: 1,
+			targetClassId: 6,
+			hole: null,
+			holesInOrigin: [],
+		});
+		expect([...withoutMine.homeBranchLetters].sort()).toEqual(['b']);
 	});
 
 	it('still answers on a map with no home system set', () => {

@@ -71,10 +71,20 @@ export function echoSuggestions(input: {
 			: null;
 		const far = farId === null ? null : (systemById.get(farId) ?? null);
 
+		// The way back is named after the hole you came in through, which is this system:
+		// the hole between home and `a5s` is the `a5s` hole, and from this side it is the
+		// way home. Naming it after the system it leads to would say `HOME` on every
+		// branch of the chain and tell a scout nothing about which hole they are looking
+		// at.
+		if (farId !== null && farId === homeward && input.system.alias) {
+			out.set(sig.id, { alias: input.system.alias, homeward: true, settled: true });
+			continue;
+		}
+
 		// A destination the chain has already named keeps that name; nothing should
 		// suggest a different one for a system people are flying to.
 		if (far?.alias) {
-			out.set(sig.id, { alias: far.alias, homeward: farId === homeward, settled: true });
+			out.set(sig.id, { alias: far.alias, homeward: false, settled: true });
 			continue;
 		}
 
