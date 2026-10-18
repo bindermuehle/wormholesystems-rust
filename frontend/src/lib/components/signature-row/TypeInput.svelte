@@ -118,8 +118,12 @@
 		     its own rules: `shouldFilter={false}`. Ours matches the destination class as
 		     well as the code, which is how people ask for these holes. -->
 		<Command.Root shouldFilter={false}>
+			<!-- Not "Code, ...": password managers classify a field by keywords in its
+			     placeholder, and "code" reads as a verification code, so Apple's Passwords
+			     offered to fill this box. It is the placeholder alone -- the same component
+			     with a different one, as in the command palette, is left alone. -->
 			<Command.Input
-				placeholder="Code, name or where it leads…"
+				placeholder="K162, name or where it leads…"
 				bind:value={query}
 				class="h-8 text-xs"
 				data-testid="sig-type-search"
