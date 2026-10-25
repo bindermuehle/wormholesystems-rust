@@ -13,6 +13,7 @@
 	import { q } from '$lib/api/queries';
 	import { createIdentityActions } from '$lib/characters/identity';
 	import { scopeMeta } from '$lib/esi/scopes';
+	import { mapPath } from '$lib/map/slug';
 	import type { CharacterSummary } from '$lib/api/types/CharacterSummary';
 	import type { MapEntry } from '$lib/api/types/MapEntry';
 	import type { ServerStatus as ServerState } from '$lib/api/types/ServerStatus';
@@ -107,9 +108,9 @@
 					<Hint text={map.name}>
 						{#snippet child({ props })}
 							<a
-								href="/maps/{map.id}"
+								href={mapPath(map)}
 								class="flex max-w-44 min-w-0 items-center gap-1.5 px-2 py-1 text-xs transition-colors {here ===
-								`/maps/${map.id}`
+								mapPath(map)
 									? 'bg-muted/50 text-foreground'
 									: 'text-muted-foreground hover:bg-muted/30 hover:text-foreground'}"
 								data-testid="pinned-map"
@@ -133,7 +134,7 @@
 							{#each overflow as map (map.id)}
 								<DropdownMenu.Item>
 									{#snippet child({ props })}
-										<a href="/maps/{map.id}" {...props}>
+										<a href={mapPath(map)} {...props}>
 											<MapIcon />
 											<span class="truncate">{map.name}</span>
 										</a>

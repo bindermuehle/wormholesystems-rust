@@ -13,6 +13,7 @@
 	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 	import Undo2Icon from '@lucide/svelte/icons/undo-2';
 	import type { UpdateMapUserSettings } from '$lib/api/types/UpdateMapUserSettings';
+	import { mapPath } from '$lib/map/slug';
 	import { solarSystemId } from '$lib/map/system';
 
 	import { page } from '$app/state';
@@ -330,7 +331,7 @@
 				{#snippet child({ props })}
 					<Button
 						{...props}
-						href="/maps/{map.mapId}/settings"
+						href="{mapPath(map.data?.map ?? { id: map.mapId, name: '' })}/settings"
 						variant="ghost"
 						size="icon"
 						class="size-7"
