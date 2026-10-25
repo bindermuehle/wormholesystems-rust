@@ -40,7 +40,7 @@ test('a share link shows the chain to somebody with no account', async ({ page, 
 
 	// The link is a way in, not a place: it hands over the token and drops them on the map
 	// everyone else is looking at.
-	await expect(guestPage).toHaveURL(new RegExp(`/maps/${mapId}$`));
+	await expect(guestPage).toHaveURL(new RegExp(`/maps/(.+-)?${mapId}$`));
 	await expect(guestPage.getByTestId('map-canvas')).toBeVisible();
 	await expect(guestPage.getByTestId('system-node')).toHaveCount(2);
 	await expect(guestPage.getByTestId('status-bar-name')).toHaveText('E2E Shared');

@@ -33,6 +33,7 @@
 	import { timeAgo } from '$lib/format';
 	import { lookup } from '$lib/lookup';
 	import { ROLE_TONE } from '$lib/map/roles';
+	import { mapPath } from '$lib/map/slug';
 	import { createUserSettingsWriter } from '$lib/map/user-settings';
 	import { TRANSFER_SECTIONS, readExportFile, type ExportFilePeek } from '$lib/map/transfer';
 	import { ticking } from '$lib/now.svelte';
@@ -81,7 +82,7 @@
 			creating = false;
 			newName = '';
 			newDescription = '';
-			await goto(`/maps/${map.id}`);
+			await goto(mapPath(map));
 		},
 		onError: (err: unknown) => toast.error(errorMessage(err)),
 	}));
@@ -122,7 +123,7 @@
 		onSuccess: async (map) => {
 			importing = false;
 			importPicked = null;
-			await goto(`/maps/${map.id}`);
+			await goto(mapPath(map));
 		},
 		onError: (err: unknown) => toast.error(errorMessage(err)),
 	}));
@@ -172,7 +173,7 @@
 		data-testid="map-card"
 		data-map={map.name}
 	>
-		<a href="/maps/{map.id}" class="flex flex-1 flex-col gap-2 p-3">
+		<a href={mapPath(map)} class="flex flex-1 flex-col gap-2 p-3">
 			<span class="flex items-start justify-between gap-2">
 				<span class="min-w-0">
 					<span class="block truncate font-heading text-sm font-semibold">{map.name}</span>
@@ -235,7 +236,7 @@
 					</DropdownMenu.Trigger>
 					<DropdownMenu.Content align="end">
 						<DropdownMenu.Group>
-							<DropdownMenu.Item onSelect={() => goto(`/maps/${map.id}/settings`)}>
+							<DropdownMenu.Item onSelect={() => goto(`${mapPath(map)}/settings`)}>
 								<SettingsIcon />
 								Settings
 							</DropdownMenu.Item>

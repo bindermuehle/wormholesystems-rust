@@ -16,7 +16,7 @@ test('create a map, then delete it from the list', async ({ page }) => {
 	await page.getByTestId('new-map-create').click();
 
 	// Creating a map is how you say you want to use it, so it opens.
-	await page.waitForURL(/\/maps\/\d+/);
+	await page.waitForURL(/\/maps\/e2e-list-map-\d+$/);
 	await page.waitForSelector('[data-testid="panel-grid"]');
 
 	await gotoApp(page, '/maps');
