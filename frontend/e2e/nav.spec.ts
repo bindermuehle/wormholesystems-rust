@@ -15,7 +15,7 @@ test('a pinned map shows in the top bar and takes you to it', async ({ page, api
 	await expect(shortcut).toBeVisible();
 
 	await shortcut.click();
-	await page.waitForURL(new RegExp(`/maps/${mapId}$`));
+	await page.waitForURL(new RegExp(`/maps/(.+-)?${mapId}$`));
 	await page.waitForSelector('[data-testid="panel-grid"]');
 	// It follows you onto the map, which is the point of a shortcut.
 	await expect(page.getByTestId('pinned-map').filter({ hasText: 'E2E Pinned Map' })).toBeVisible();

@@ -120,8 +120,7 @@
 		<Command.Root shouldFilter={false}>
 			<!-- Not "Code, ...": password managers classify a field by keywords in its
 			     placeholder, and "code" reads as a verification code, so Apple's Passwords
-			     offered to fill this box. It is the placeholder alone -- the same component
-			     with a different one, as in the command palette, is left alone. -->
+			     offers to fill the box. -->
 			<Command.Input
 				placeholder="K162, name or where it leads…"
 				bind:value={query}

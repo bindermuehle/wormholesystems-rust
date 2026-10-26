@@ -2,10 +2,11 @@
 	import type { Component } from 'svelte';
 
 	import { page } from '$app/state';
+	import { mapIdFromSlug } from '$lib/map/slug';
 
 	import type { MapSeed } from './state/map-queries.svelte';
 
-	const mapId = $derived(Number(page.params.id) || 0);
+	const mapId = $derived(mapIdFromSlug(page.params.id ?? '') || 0);
 	let { data }: { data: MapSeed } = $props();
 
 	// The load runs on the server, so a map that is gone or not yours answers with its real

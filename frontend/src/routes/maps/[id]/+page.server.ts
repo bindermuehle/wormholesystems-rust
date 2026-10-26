@@ -1,3 +1,6 @@
+import { redirect } from '@sveltejs/kit';
+
+import { mapIdFromSlug, mapSlug } from '$lib/map/slug';
 import { gridConfig, mapSignatures, mapUserSettings, mapView } from '$lib/server/api';
 import { mapLoadFailed } from '$lib/server/load-errors';
 import type { PageServerLoad } from './$types';
@@ -12,7 +15,7 @@ import type { PageServerLoad } from './$types';
 // shared with this visitor, or a backend that is down ends on the error page that says
 // which, with the status that goes with it. The rest only fall back to the client.
 export const load: PageServerLoad = async (event) => {
-	const id = Number(event.params.id);
+	const id = mapIdFromSlug(event.params.id);
 	const [view, settings, signatures, grid] = await Promise.all([
 		mapView(event, id).catch((err: unknown) =>
 			err instanceof Error ? err : new Error(String(err)),
@@ -25,6 +28,10 @@ export const load: PageServerLoad = async (event) => {
 		const { me } = await event.parent();
 		mapLoadFailed(view, me !== null);
 	}
+	// A bare id, or the name from before a rename, settles on the current address. Not
+	// permanent: a map renamed back would otherwise bounce between two cached redirects.
+	const slug = mapSlug(view.map);
+	if (event.params.id !== slug) redirect(302, `/maps/${slug}${event.url.search}`);
 	// A map link is the one people actually paste at each other, so it says which map.
 	return { view, settings, signatures, grid, seo: { title: view.map.name } };
 };
