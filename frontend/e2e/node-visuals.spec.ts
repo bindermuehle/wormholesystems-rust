@@ -91,7 +91,8 @@ test('a long occupier is cut short inside the node, in full on hover', async ({ 
 	});
 
 	await gotoApp(page, `/maps/${mapId}`);
-	const node = page.getByTestId('system-node').filter({ hasText: 'J122515' });
+	// By alias: with an occupier the node no longer shows the system's name.
+	const node = page.getByTestId('system-node').filter({ hasText: 'Home' });
 	const label = node.getByTestId('node-occupier');
 	await expect(label).toBeVisible();
 

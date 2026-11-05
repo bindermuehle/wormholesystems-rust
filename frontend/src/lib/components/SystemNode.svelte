@@ -167,9 +167,12 @@
 		/>
 		{#if node.alias}
 			<span class="shrink-0 font-medium text-foreground">{node.alias}</span>
-			<span class="truncate text-muted-foreground">
-				{mapped?.name ?? signatureId ?? 'Unmapped'}
-			</span>
+			<!-- With an occupier there is no room for both, and the occupier says more. -->
+			{#if !mapped?.occupying_group}
+				<span class="truncate text-muted-foreground">
+					{mapped?.name ?? signatureId ?? 'Unmapped'}
+				</span>
+			{/if}
 		{:else if mapped}
 			<span class="truncate font-medium text-foreground">{mapped.name}</span>
 		{:else if signatureId}
