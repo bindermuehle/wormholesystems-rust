@@ -27,6 +27,7 @@ mod http_access;
 mod http_alerts;
 mod http_auth;
 mod http_background_image;
+mod http_echo;
 mod http_instance;
 mod http_killmails;
 mod http_naming;

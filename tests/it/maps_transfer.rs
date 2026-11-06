@@ -891,6 +891,43 @@ async fn import_reads_rally_points_in_either_spelling() {
     ));
 }
 
+/// Echo was an alias scheme before it was a naming strategy, so this fork's older exports
+/// say `echo` in `bookmark_alias_scheme`, and the legacy app's say `corp`.
+#[tokio::test]
+async fn an_echo_alias_scheme_imports_as_the_echo_strategy() {
+    let (pool, _db) = common::db::fresh().await;
+    let w = world(&pool).await;
+    let sections = SectionSet {
+        settings: true,
+        ..Default::default()
+    };
+    for scheme in ["echo", "corp"] {
+        sqlx::query("update maps set naming_strategy = 'chain', alias_scheme = 'alphabetical' where id = $1")
+            .bind(w.map_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let file = rally_settings_file(r#""rally_solarsystem_ids": null"#).replace(
+            r#""bookmark_alias_scheme": "numeric""#,
+            &format!(r#""bookmark_alias_scheme": "{scheme}""#),
+        );
+        let parsed = parse_export(&file, sections, ImportTarget::ExistingMap).unwrap();
+        import_map(&pool, w.owner, w.map_id, &parsed).await.unwrap();
+        let (strategy, alias_scheme): (String, String) = sqlx::query_as(
+            "select naming_strategy::text, alias_scheme::text from maps where id = $1",
+        )
+        .bind(w.map_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            (strategy.as_str(), alias_scheme.as_str()),
+            ("echo", "numeric"),
+            "{scheme}"
+        );
+    }
+}
+
 fn rally_settings_file(rally: &str) -> String {
     format!(
         r#"{{

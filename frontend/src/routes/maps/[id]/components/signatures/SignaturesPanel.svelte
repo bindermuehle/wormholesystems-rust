@@ -81,11 +81,11 @@
 
 	// The server works the names out for the whole list at once: each suggestion takes a
 	// slot the next one must not reuse, which a row deciding on its own cannot know. Asked
-	// again whenever a name, an edge or one of this system's scans changes.
+	// again whenever a name, home, an edge or one of this system's scans changes.
 	const echoInputs = $derived(
 		showAlias
 			? JSON.stringify([
-					ctx.systems.map((s) => [s.id, s.alias]),
+					ctx.systems.map((s) => [s.id, s.alias, s.is_home]),
 					ctx.connections.map((c) => [c.id, c.from_system, c.to_system]),
 					ctx.sigs
 						.filter((sig) => sig.solar_system_id === systemId)

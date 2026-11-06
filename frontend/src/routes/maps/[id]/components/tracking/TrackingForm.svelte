@@ -3,6 +3,7 @@
 	// prompt) whenever a new jump arrives, so every field here seeds itself once.
 	import SearchIcon from '@lucide/svelte/icons/search';
 
+	import { untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { api } from '$lib/api/client';
 	import { copyPending } from '$lib/clipboard';
@@ -77,7 +78,10 @@
 			// slot and a wandering hole of the same class does not -- so ask again now
 			// that it is known. An untouched suggestion is replaced; a name typed by hand
 			// stays.
-			const untouched = suggested ?? '';
+			// Read without tracking: writing `suggested` below must not run this again, which
+			// would ask the server twice and copy the signature's statuses over a pick made
+			// by hand in the meantime.
+			const untouched = untrack(() => suggested ?? '');
 			void tracker.suggestAliasForSignature(prompt, signature).then((again) => {
 				// Only if the pick still stands and nobody typed over the suggestion meanwhile.
 				if (again && chosen?.id === signature.id && alias === untouched) {

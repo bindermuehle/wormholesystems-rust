@@ -19,7 +19,7 @@
 //! uses echo. Bookmarks are the siblings strategy's: an echo alias says nothing about which
 //! way home is, so the map's distances decide it.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -27,9 +27,7 @@ use sqlx::PgPool;
 
 use super::bookmark::Hole;
 use super::siblings::Siblings;
-use super::{
-    CLAIMS, Destination, NamingMap, NamingStrategy, Node, Target, load, signature_type,
-};
+use super::{CLAIMS, Destination, NamingMap, NamingStrategy, Node, Target, load, signature_type};
 use crate::maps::access::Reader;
 use crate::maps::error::{MapError, Result};
 use crate::maps::map::MapNaming;
@@ -217,8 +215,7 @@ fn next_slot_letter(branch: char, kind: &str, aliases: &[String]) -> Option<char
 /// worse.
 fn is_home_static(map: &NamingMap, home: &Node, signature: Option<i64>) -> bool {
     let facts = map.echo();
-    let (Some(scan), Some(system)) = (signature.and_then(|pk| facts.scan(pk)), &home.system)
-    else {
+    let (Some(scan), Some(system)) = (signature.and_then(|pk| facts.scan(pk)), &home.system) else {
         return false;
     };
     let Some(code) = scan.code.as_deref() else {
@@ -246,12 +243,14 @@ pub(super) async fn load_facts(pool: &PgPool, map_id: i64, map: &NamingMap) -> R
         .and_then(|n| n.system.as_ref())
         .map(|s| s.solar_system_id);
     let home_statics = match home_system {
-        Some(id) => sqlx::query_scalar!(
-            "select wormhole_code from wormhole_system_statics where solar_system_id = $1",
-            id,
-        )
-        .fetch_all(pool)
-        .await?,
+        Some(id) => {
+            sqlx::query_scalar!(
+                "select wormhole_code from wormhole_system_statics where solar_system_id = $1",
+                id,
+            )
+            .fetch_all(pool)
+            .await?
+        }
         None => Vec::new(),
     };
     let scans = sqlx::query!(
@@ -319,11 +318,8 @@ fn row_aliases(map: &NamingMap, origin: &Node) -> Vec<EchoRowAlias> {
     let Some(here) = origin.system.as_ref().map(|s| s.solar_system_id) else {
         return Vec::new();
     };
-    let distances = map.distances_from_home();
-    let homeward = |far: i64| match (distances.get(&far), distances.get(&origin.id)) {
-        (Some(far), Some(near)) => far < near,
-        _ => false,
-    };
+    let toward_home = parent_toward_home(map, origin.id);
+    let homeward = |far: i64| toward_home == Some(far);
     let mut scans: Vec<&Scan> = map
         .echo()
         .scans
@@ -389,6 +385,32 @@ fn row_aliases(map: &NamingMap, origin: &Node) -> Vec<EchoRowAlias> {
         handed_out.push(alias);
     }
     out
+}
+
+/// The neighbour one hop closer to home: `node`'s parent in a breadth-first walk from the
+/// map's home system. The hole to it is the way back, which the signature list marks with
+/// a `+`. One parent, so a loop in the chain still marks a single hole. `None` with no home,
+/// at home, or with no path to it.
+fn parent_toward_home(map: &NamingMap, node: i64) -> Option<i64> {
+    let home = map.nodes().iter().find(|n| n.is_home)?.id;
+    let mut parent: HashMap<i64, i64> = HashMap::new();
+    let mut seen: HashSet<i64> = HashSet::from([home]);
+    let mut queue = VecDeque::from([home]);
+    while let Some(current) = queue.pop_front() {
+        if current == node {
+            return parent.get(&current).copied();
+        }
+        // By id, so the answer does not depend on the order the edges were read in.
+        let mut next: Vec<i64> = map.neighbours(current).map(|n| n.id).collect();
+        next.sort_unstable();
+        for id in next {
+            if seen.insert(id) {
+                parent.insert(id, current);
+                queue.push_back(id);
+            }
+        }
+    }
+    None
 }
 
 /// Name the ghost a scan leads to, now that its type says where.
@@ -634,7 +656,10 @@ mod tests {
         assert_eq!(next_slot_letter('a', "5", &[]), Some('a'));
         let r_taken: Vec<String> = ('a'..='r').map(|c| format!("a5{c}")).collect();
         assert_eq!(next_slot_letter('a', "5", &r_taken), Some('t'));
-        assert_eq!(next_slot_letter('a', "5", &list(&["b5a", "a3a"])), Some('a'));
+        assert_eq!(
+            next_slot_letter('a', "5", &list(&["b5a", "a3a"])),
+            Some('a')
+        );
         assert_eq!(next_slot_letter('a', "5", &list(&["+a5a"])), Some('b'));
         // `a13a` is shattered, not a C1 in slot `3`.
         assert_eq!(next_slot_letter('a', "1", &list(&["a13a"])), Some('a'));
@@ -644,7 +669,12 @@ mod tests {
 
     #[test]
     fn home_static_takes_the_s_slot() {
-        let m = map(vec![home()], vec![], &["H296"], vec![scan(10, "H296", 5, 0, None)]);
+        let m = map(
+            vec![home()],
+            vec![],
+            &["H296"],
+            vec![scan(10, "H296", 5, 0, None)],
+        );
         assert_eq!(
             Echo.alias(&m, &home(), &wormhole(5, Some(10))).as_deref(),
             Some("a5s")
@@ -687,7 +717,12 @@ mod tests {
 
     #[test]
     fn a_hole_whose_code_is_not_a_static_is_not_one() {
-        let m = map(vec![home()], vec![], &["H296"], vec![scan(10, "V753", 6, 0, None)]);
+        let m = map(
+            vec![home()],
+            vec![],
+            &["H296"],
+            vec![scan(10, "V753", 6, 0, None)],
+        );
         assert_eq!(
             Echo.alias(&m, &home(), &wormhole(6, Some(10))).as_deref(),
             Some("b6a")
@@ -799,6 +834,31 @@ mod tests {
     }
 
     #[test]
+    fn a_loop_back_to_home_marks_one_hole_as_the_way_back() {
+        // a4a hangs off both a5s and b3a, which are each one hop from home: two holes lead
+        // closer to home, and only one of them is the way back.
+        let nodes = vec![home(), node(2, "a5s"), node(3, "b3a"), node(4, "a4a")];
+        let edges = vec![edge(1, 1, 2), edge(2, 1, 3), edge(3, 2, 4), edge(4, 3, 4)];
+        let mut via_a5s = scan(10, "K162", 5, 0, Some(3));
+        via_a5s.solar_system_id = 31_000_004;
+        let mut via_b3a = scan(11, "K162", 3, 1, Some(4));
+        via_b3a.solar_system_id = 31_000_004;
+        let m = map(nodes, edges, &["H296"], vec![via_a5s, via_b3a]);
+        let origin = m.node(4).unwrap().clone();
+        let rows = row_aliases(&m, &origin);
+        let marked: Vec<i64> = rows
+            .iter()
+            .filter(|r| r.homeward)
+            .map(|r| r.signature)
+            .collect();
+        assert_eq!(
+            marked,
+            [10],
+            "the walk from home reaches a4a through a5s first"
+        );
+    }
+
+    #[test]
     fn rows_suggest_a_name_for_an_unnamed_ghost() {
         let nodes = vec![home(), ghost(2, None)];
         let m = map(
@@ -826,7 +886,12 @@ mod tests {
     fn renaming_a_ghost_does_not_count_its_own_name() {
         let nodes = vec![home(), node(2, "b5a"), ghost(3, Some("c6a"))];
         let edges = vec![edge(1, 1, 2), edge(2, 1, 3)];
-        let m = map(nodes, edges, &["H296"], vec![scan(10, "V753", 6, 0, Some(2))]);
+        let m = map(
+            nodes,
+            edges,
+            &["H296"],
+            vec![scan(10, "V753", 6, 0, Some(2))],
+        );
         assert_eq!(
             suggest(&m, &home(), &wormhole(6, Some(10)), Some(3), &[]).as_deref(),
             Some("c6a"),

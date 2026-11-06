@@ -472,7 +472,7 @@ pub fn parse_export(
     let parsed = Sections {
         settings: sections
             .settings
-            .then(|| section(available, "settings"))
+            .then(|| settings_section(available))
             .transpose()?,
         access: sections
             .access
@@ -507,6 +507,30 @@ pub fn parse_export(
         map_name,
         sections: parsed,
     })
+}
+
+/// The settings section, reading echo the way older files wrote it. Until echo became a
+/// naming strategy it was an alias scheme, so this fork's earlier exports say
+/// `"bookmark_alias_scheme": "echo"`, and the legacy app's say `"corp"` for the same thing.
+/// Ours, not upstream's.
+fn settings_section(
+    available: &serde_json::Map<String, serde_json::Value>,
+) -> Result<SettingsSection> {
+    let mut available = available.clone();
+    if let Some(settings) = available
+        .get_mut("settings")
+        .and_then(serde_json::Value::as_object_mut)
+        && matches!(
+            settings
+                .get("bookmark_alias_scheme")
+                .and_then(|v| v.as_str()),
+            Some("echo" | "corp")
+        )
+    {
+        settings.insert("bookmark_alias_scheme".into(), "numeric".into());
+        settings.insert("naming_strategy".into(), "echo".into());
+    }
+    section(&available, "settings")
 }
 
 /// Decode one section of the file, already known to be present.
