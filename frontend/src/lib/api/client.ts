@@ -444,8 +444,11 @@ export function createApi(
 		gotoMapEvent: (cmd: GotoMapEvent) => post<null>(`/api/maps/${cmd.map_id}/events/goto`, cmd),
 
 		// Signatures
+		// Versioned like the routing graph: the server used to send this with a day-long
+		// max-age, so a browser can hold a copy from before the spawn fields existed and
+		// would never ask. A new URL is not in that cache.
 		signatureCatalog: (signal?: AbortSignal) =>
-			get<SignatureCatalog>('/api/signature-types', signal),
+			get<SignatureCatalog>('/api/signature-types?v=2', signal),
 		addSignature: (cmd: AddSignature) =>
 			post<Signature>(`/api/maps/${cmd.map_id}/signatures/add`, cmd),
 		updateSignature: (cmd: UpdateSignature) =>
