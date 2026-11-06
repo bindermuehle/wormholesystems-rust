@@ -50,7 +50,7 @@ pub struct PlacementRow {
 /// A placement that is not on the map yet. Home, rally and the paste time are earned on the
 /// map, never brought along, so a new row starts without them.
 #[derive(Debug, Clone, Copy)]
-pub struct NewPlacement<'a> {
+pub(crate) struct NewPlacement<'a> {
     pub solar_system_id: Option<i64>,
     pub position_x: f64,
     pub position_y: f64,
@@ -62,7 +62,7 @@ pub struct NewPlacement<'a> {
 
 impl<'a> NewPlacement<'a> {
     /// A system somebody placed.
-    pub fn system(solar_system_id: i64, x: f64, y: f64, alias: Option<&'a str>) -> Self {
+    pub(crate) fn system(solar_system_id: i64, x: f64, y: f64, alias: Option<&'a str>) -> Self {
         NewPlacement {
             solar_system_id: Some(solar_system_id),
             position_x: x,
@@ -75,7 +75,7 @@ impl<'a> NewPlacement<'a> {
     }
 
     /// The far side of a scanned hole, naming the scan and the placement it hangs off.
-    pub fn ghost(
+    pub(crate) fn ghost(
         signature_pk: i64,
         hangs_off_id: i64,
         x: f64,
@@ -226,6 +226,32 @@ pub(crate) async fn move_unpinned(
     Ok(())
 }
 
+/// [`move_unpinned`] for several placements in one statement, keyed by placement id.
+pub(crate) async fn move_many_unpinned(
+    tx: &mut Tx<'_>,
+    map_id: i64,
+    moves: &std::collections::BTreeMap<i64, (f64, f64)>,
+) -> Result<()> {
+    if moves.is_empty() {
+        return Ok(());
+    }
+    let ids: Vec<i64> = moves.keys().copied().collect();
+    let xs: Vec<f64> = moves.values().map(|(x, _)| *x).collect();
+    let ys: Vec<f64> = moves.values().map(|(_, y)| *y).collect();
+    sqlx::query!(
+        "update map_solar_systems s set position_x = m.x, position_y = m.y
+         from unnest($2::bigint[], $3::float8[], $4::float8[]) as m(id, x, y)
+         where s.id = m.id and s.map_id = $1 and not s.is_pinned",
+        map_id,
+        &ids,
+        &xs,
+        &ys,
+    )
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 /// Take these placements off the map, whatever they are. Their connections and signatures
 /// go with them by the foreign keys.
 pub(crate) async fn delete(tx: &mut Tx<'_>, map_id: i64, ids: &[i64]) -> Result<()> {
@@ -237,59 +263,6 @@ pub(crate) async fn delete(tx: &mut Tx<'_>, map_id: i64, ids: &[i64]) -> Result<
     .execute(&mut **tx)
     .await?;
     Ok(())
-}
-
-/// Take these placements off the map, passing over home and pinned ones. The guard is
-/// repeated on the delete itself, so the rule travels with the query whatever the caller
-/// checked beforehand. Returns how many went.
-pub(crate) async fn delete_unprotected(tx: &mut Tx<'_>, map_id: i64, ids: &[i64]) -> Result<u64> {
-    Ok(sqlx::query!(
-        "delete from map_solar_systems
-         where map_id = $1 and id = any($2) and not is_home and not is_pinned",
-        map_id,
-        ids,
-    )
-    .execute(&mut **tx)
-    .await?
-    .rows_affected())
-}
-
-/// Which of these placements are orphans: unpinned, unmarked, and without a connection
-/// left. Asked by a sweep that snapshots them before they go.
-pub(crate) async fn orphans(tx: &mut Tx<'_>, map_id: i64, ids: &[i64]) -> Result<Vec<i64>> {
-    Ok(sqlx::query_scalar!(
-        r#"select id as "id!" from map_solar_systems mss
-           where mss.map_id = $1 and mss.id = any($2)
-             and not mss.is_pinned and not mss.is_home and not mss.is_rally
-             and not exists (
-                 select 1 from map_connections c
-                 where c.map_id = $1 and (c.from_system = mss.id or c.to_system = mss.id)
-             )"#,
-        map_id,
-        ids,
-    )
-    .fetch_all(&mut **tx)
-    .await?)
-}
-
-/// Take a placement off the map if it is an orphan by the same rule as [`orphans`]. Returns
-/// whether it went.
-pub(crate) async fn delete_if_orphan(tx: &mut Tx<'_>, map_id: i64, id: i64) -> Result<bool> {
-    let deleted = sqlx::query!(
-        "delete from map_solar_systems mss
-         where mss.id = $1 and mss.map_id = $2
-           and not mss.is_pinned and not mss.is_home and not mss.is_rally
-           and not exists (
-               select 1 from map_connections c
-               where c.map_id = $2 and (c.from_system = $1 or c.to_system = $1)
-           )",
-        id,
-        map_id,
-    )
-    .execute(&mut **tx)
-    .await?
-    .rows_affected();
-    Ok(deleted > 0)
 }
 
 /// Turn a ghost into the system it was found to be. A real system names no scan and hangs

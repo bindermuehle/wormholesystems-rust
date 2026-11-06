@@ -7,10 +7,11 @@
 //!
 //! Without a starting point, the distance is measured from the system just placed, over
 //! gates, as legacy did: once the chain is in range, placing something unrelated elsewhere
-//! on it says nothing new. The claim is per placement, so a system added, removed and added
-//! again is a new occasion worth a message. With a starting point the claim is per route
-//! instead: however many placements and connections report the same way to the target, it
-//! is said once, and a new way is a new occasion.
+//! on it says nothing new. The claim is per placement and the system it holds, so a system
+//! added, removed and added again, or a ghost named as something else, is a new occasion
+//! worth a message. With a starting point the claim is per route instead: however many
+//! placements and connections report the same way to the target, it is said once, and a
+//! new way is a new occasion.
 
 use sqlx::PgPool;
 
@@ -112,7 +113,7 @@ pub async fn evaluate(
                 ) else {
                     continue;
                 };
-                (found, format!("placement:{placed}"))
+                (found, placement_key(placed, origin))
             }
             // Every mapped system is already zero jumps from the chain, so a wormhole
             // between two of them cannot bring the target any closer.
@@ -161,7 +162,14 @@ fn route_key(mapped: &[i64]) -> String {
     format!("route:{}", ids.join("-"))
 }
 
+/// A placement is news once per system it holds: a ghost named, cleared and named as
+/// something else has landed twice.
+pub(super) fn placement_key(map_solar_system_id: i64, solar_system_id: i64) -> String {
+    format!("placement:{map_solar_system_id}:{solar_system_id}")
+}
+
 /// One system's display data, in route order.
+#[derive(Debug)]
 pub struct Named {
     pub id: i64,
     pub name: String,
@@ -196,11 +204,8 @@ fn build(
     map_id: i64,
 ) -> Embed {
     let target = route.last();
-    let target_name = target.map(|s| s.name.as_str()).unwrap_or("Somewhere");
-    let from = route
-        .first()
-        .map(|s| s.name.as_str())
-        .unwrap_or("the chain");
+    let target_name = target.map_or("Somewhere", |s| s.name.as_str());
+    let from = route.first().map_or("the chain", |s| s.name.as_str());
     let jumps = found.jumps;
     let away = format!(
         "putting **{target_name}** {jumps} {} away",
@@ -215,19 +220,19 @@ fn build(
     };
 
     let mut fields = vec![
-        Field::new(
+        Field::inline(
             "Target",
-            target
-                .map(|s| format!("{} ({:.1})", s.name, ccp_round_security(s.security)))
-                .unwrap_or_else(|| target_name.to_string()),
-            true,
+            target.map_or_else(
+                || target_name.to_string(),
+                |s| format!("{} ({:.1})", s.name, ccp_round_security(s.security)),
+            ),
         ),
-        Field::new("Gate jumps", jumps.to_string(), true),
-        Field::new("From", from, true),
+        Field::inline("Gate jumps", jumps.to_string()),
+        Field::inline("From", from),
     ];
     if route.len() > 1 {
         let names: Vec<&str> = route.iter().map(|s| s.name.as_str()).collect();
-        fields.push(Field::new("Route", names.join(" → "), false));
+        fields.push(Field::full_width("Route", names.join(" → ")));
     }
 
     Embed {
@@ -237,7 +242,7 @@ fn build(
         ),
         url: Some(format!("{public_url}/maps/{map_id}")),
         description: Some(description),
-        color: security_color(target.map(|s| s.security).unwrap_or(-1.0)),
+        color: security_color(target.map_or(-1.0, |s| s.security)),
         fields,
         thumbnail: None,
         footer: None,

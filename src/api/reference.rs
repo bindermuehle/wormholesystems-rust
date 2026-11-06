@@ -4,6 +4,7 @@
 use super::extract::Credentials;
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -49,7 +50,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
 
 /// How much of New Eden this install has loaded. The landing page states these, so they
 /// are the real contents of this database rather than numbers written into a page.
-#[derive(Serialize, ts_rs::TS, utoipa::ToSchema)]
+#[derive(Debug, Serialize, ts_rs::TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct ReferenceCounts {
     pub solar_systems: i64,
@@ -88,7 +89,7 @@ pub async fn reference_counts(State(state): State<AppState>) -> ApiResult<Refere
 /// What this deployment can actually do, so the interface can say what is switched off
 /// rather than offering something that will quietly never arrive. Self-hosters configure
 /// Discord separately from the rest, and most of them do not configure it at all.
-#[derive(Serialize, ts_rs::TS, utoipa::ToSchema)]
+#[derive(Debug, Serialize, ts_rs::TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct Instance {
     pub discord: DiscordCapability,
@@ -97,7 +98,7 @@ pub struct Instance {
     pub announcement: Option<crate::announcement::Announcement>,
 }
 
-#[derive(Serialize, ts_rs::TS, utoipa::ToSchema)]
+#[derive(Debug, Serialize, ts_rs::TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct DiscordCapability {
     /// Whether an account can be linked at all: the OAuth half of the application.
@@ -156,7 +157,7 @@ pub async fn grid_config(State(_state): State<AppState>) -> ApiResult<GridConfig
     Ok(Json(crate::maps::grid()))
 }
 
-#[derive(Deserialize, utoipa::IntoParams)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct EffectsQuery {
     /// The effect, as the map names it (`Pulsar`, `Wolf-Rayet Star`, ...).
@@ -183,7 +184,7 @@ pub async fn effect_modifiers(
     Ok(Json(mods))
 }
 
-#[derive(Deserialize, utoipa::IntoParams)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct SearchQuery {
     /// What to look for; at least two characters.
@@ -211,7 +212,7 @@ pub async fn search_systems(
 /// The static half of the routing graph, typed and built once: k-space stargate
 /// adjacency (Zarzakh excluded since its gates are faction-gated), per-system security
 /// for the safer/less-secure cost functions, and the station indexes the planner offers.
-#[derive(Clone, serde::Serialize, ts_rs::TS, utoipa::ToSchema)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct RoutingGraph {
     pub adjacency: std::collections::HashMap<i64, Vec<i64>>,
@@ -223,7 +224,7 @@ pub struct RoutingGraph {
 }
 
 /// A named set of stations: a service, or the corporation that owns them.
-#[derive(Clone, serde::Serialize, ts_rs::TS, utoipa::ToSchema)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct StationGroup {
     pub id: i64,
@@ -234,14 +235,14 @@ pub struct StationGroup {
     pub stations: Vec<StationRef>,
 }
 
-#[derive(Clone, serde::Serialize, ts_rs::TS, utoipa::ToSchema)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct FactionRef {
     pub id: i64,
     pub name: String,
 }
 
-#[derive(Clone, serde::Serialize, ts_rs::TS, utoipa::ToSchema)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct StationRef {
     pub id: i64,
@@ -252,10 +253,9 @@ pub struct StationRef {
 /// The graph is immutable SDE data, so it is built and serialized once per process
 /// rather than recomputed for every cold client load. `Bytes` clones are refcounted,
 /// so a request never copies the multi-megabyte payload.
-static ROUTING_GRAPH_JSON: tokio::sync::OnceCell<axum::body::Bytes> =
-    tokio::sync::OnceCell::const_new();
+static ROUTING_GRAPH_JSON: tokio::sync::OnceCell<CachedJson> = tokio::sync::OnceCell::const_new();
 
-/// `GET /api/routing-graph`. Static reference data: cacheable for a day.
+/// `GET /api/routing-graph`. Static reference data, revalidated by ETag.
 #[utoipa::path(
     get,
     path = "/api/routing-graph",
@@ -265,30 +265,98 @@ static ROUTING_GRAPH_JSON: tokio::sync::OnceCell<axum::body::Bytes> =
 )]
 pub async fn routing_graph(
     State(state): State<AppState>,
-) -> Result<impl axum::response::IntoResponse, ApiError> {
-    let body = match ROUTING_GRAPH_JSON.get() {
-        Some(body) => body.clone(),
-        None => {
-            let graph = build_routing_graph(&state.db).await?;
-            let body = axum::body::Bytes::from(
-                serde_json::to_string(&graph).expect("routing graph serializes"),
-            );
-            // An empty adjacency means the SDE is not seeded yet. Serving it is fine;
-            // pinning it for the process lifetime would keep the planner empty until
-            // a restart, so only a real graph is cached.
-            if !graph.adjacency.is_empty() {
-                let _ = ROUTING_GRAPH_JSON.set(body.clone());
-            }
-            body
+    headers: axum::http::HeaderMap,
+) -> Result<axum::response::Response, ApiError> {
+    // An empty adjacency means the SDE is not seeded yet. Serving it is fine; pinning it
+    // for the process lifetime would keep the planner empty until a restart, so only a
+    // real graph is cached.
+    cached_json(
+        &ROUTING_GRAPH_JSON,
+        &headers,
+        || build_routing_graph(&state.db),
+        |graph| graph.adjacency.is_empty(),
+    )
+    .await
+}
+
+/// A serialized reference response and the ETag of its bytes.
+#[derive(Debug, Clone)]
+pub(super) struct CachedJson {
+    body: axum::body::Bytes,
+    etag: String,
+}
+
+impl CachedJson {
+    fn new(body: Vec<u8>) -> Self {
+        use sha2::Digest as _;
+        let digest = sha2::Sha256::digest(&body);
+        Self {
+            etag: format!("\"{}\"", hex::encode(&digest[..16])),
+            body: body.into(),
         }
+    }
+}
+
+/// Serve seeded reference data that is built and serialized once per process. Cold
+/// requests that race share one build (`get_or_try_init`), so a burst of first loads runs
+/// the queries once. A result that `is_unseeded` is served but not kept, so seeding the
+/// database later does not need a restart.
+///
+/// Browsers revalidate on every load rather than keeping it for a while: a re-seed changes
+/// it, and a stale copy hid new catalog rows for up to a day. Unchanged, that is a 304.
+pub(super) async fn cached_json<T, F, Fut>(
+    cell: &'static tokio::sync::OnceCell<CachedJson>,
+    headers: &axum::http::HeaderMap,
+    build: F,
+    is_unseeded: impl FnOnce(&T) -> bool,
+) -> Result<axum::response::Response, ApiError>
+where
+    T: Serialize,
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<T, ApiError>>,
+{
+    enum Uncached {
+        Unseeded(CachedJson),
+        Failed(ApiError),
+    }
+    let cached = match cell
+        .get_or_try_init(|| async {
+            let value = build().await.map_err(Uncached::Failed)?;
+            let cached =
+                CachedJson::new(serde_json::to_vec(&value).expect("reference data serializes"));
+            if is_unseeded(&value) {
+                return Err(Uncached::Unseeded(cached));
+            }
+            Ok(cached)
+        })
+        .await
+    {
+        Ok(cached) => cached.clone(),
+        Err(Uncached::Unseeded(cached)) => cached,
+        Err(Uncached::Failed(err)) => return Err(err),
     };
+    let cache_headers = [
+        (
+            axum::http::header::CACHE_CONTROL,
+            "public, no-cache".to_owned(),
+        ),
+        (axum::http::header::ETAG, cached.etag.clone()),
+    ];
+    let matches = headers
+        .get_all(axum::http::header::IF_NONE_MATCH)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .any(|tag| tag.trim().trim_start_matches("W/") == cached.etag);
+    if matches {
+        return Ok((axum::http::StatusCode::NOT_MODIFIED, cache_headers).into_response());
+    }
     Ok((
-        [
-            (axum::http::header::CACHE_CONTROL, "public, max-age=86400"),
-            (axum::http::header::CONTENT_TYPE, "application/json"),
-        ],
-        body,
-    ))
+        cache_headers,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        cached.body,
+    )
+        .into_response())
 }
 
 async fn build_routing_graph(db: &sqlx::PgPool) -> Result<RoutingGraph, ApiError> {
@@ -320,10 +388,24 @@ async fn build_routing_graph(db: &sqlx::PgPool) -> Result<RoutingGraph, ApiError
     let stations: Vec<i64> = sqlx::query_scalar!("select distinct solar_system_id from stations")
         .fetch_all(db)
         .await?;
-    // The legacy "essential" station services, each carrying its concrete stations so a
-    // result can name the station. Security Offices (27) are a known quirk: only
-    // CONCORD-owned stations below 0.5 displayed security actually run one, despite the
-    // operation listing the service everywhere.
+    let services = essential_services(db).await?;
+    let corporations = corporation_stations(db).await?;
+
+    Ok(RoutingGraph {
+        adjacency,
+        security,
+        jove,
+        stations,
+        services,
+        corporations,
+    })
+}
+
+/// The legacy "essential" station services, each carrying its concrete stations so a
+/// result can name the station. Security Offices (27) are a known quirk: only
+/// CONCORD-owned stations below 0.5 displayed security actually run one, despite the
+/// operation listing the service everywhere.
+async fn essential_services(db: &sqlx::PgPool) -> Result<Vec<StationGroup>, ApiError> {
     const ESSENTIAL_SERVICES: [i64; 6] = [5, 10, 13, 14, 15, 27];
     const SECURITY_OFFICE: i64 = 27;
     const CONCORD_CORPORATION: i64 = 1000125;
@@ -348,7 +430,7 @@ async fn build_routing_graph(db: &sqlx::PgPool) -> Result<RoutingGraph, ApiError
         row.service_id != SECURITY_OFFICE
             || crate::util::security::ccp_round_security(row.security_status) < 0.5
     });
-    let services = group_stations(rows.map(|row| {
+    Ok(group_stations(rows.map(|row| {
         (
             row.service_id,
             row.service_name,
@@ -358,11 +440,13 @@ async fn build_routing_graph(db: &sqlx::PgPool) -> Result<RoutingGraph, ApiError
                 solar_system_id: row.solar_system_id,
             },
         )
-    }));
+    })))
+}
 
-    // The NPC corporations that own stations, in the same shape as the services above, so
-    // "the nearest Quafe Company station" is the same question as "the nearest repair shop"
-    // and the client answers both with one relaxation over the graph it already has.
+/// The NPC corporations that own stations, in the same shape as the services above, so
+/// "the nearest Quafe Company station" is the same question as "the nearest repair shop"
+/// and the client answers both with one relaxation over the graph it already has.
+async fn corporation_stations(db: &sqlx::PgPool) -> Result<Vec<StationGroup>, ApiError> {
     let rows = sqlx::query!(
         r#"select st.owner_corporation_id as "corporation_id!", c.name as "corporation_name!",
                   c.faction_id, f.name as "faction_name?",
@@ -395,15 +479,7 @@ async fn build_routing_graph(db: &sqlx::PgPool) -> Result<RoutingGraph, ApiError
     for group in &mut corporations {
         group.faction = faction_of.remove(&group.id);
     }
-
-    Ok(RoutingGraph {
-        adjacency,
-        security,
-        jove,
-        stations,
-        services,
-        corporations,
-    })
+    Ok(corporations)
 }
 
 /// Fold `(group id, group name, station)` rows, already ordered by group, into one entry
@@ -456,7 +532,7 @@ pub async fn resolve_systems(
     Ok(Json(systems_for(&state.db, &ids).await?))
 }
 
-#[derive(Deserialize, utoipa::IntoParams)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct ResolveQuery {
     /// Comma-separated solar system ids, at most 200.

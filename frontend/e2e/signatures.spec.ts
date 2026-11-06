@@ -220,7 +220,9 @@ test('wormhole type and connection can be unset back to Unknown', async ({ brows
 
 	// Unset the connection: it lets go of Jita, and the hole it leads to is drawn for it
 	// rather than left as nothing -- a scanned wormhole with nowhere to lead is owed a
-	// node, which is where its name lives. The connection to Jita stays on the map.
+	// node, which is where its name lives. The connection to Jita stays on the map. The
+	// type list has to have gone first: it fades out with an "Unknown" of its own.
+	await expect(page.getByRole('option')).toHaveCount(0);
 	await row.getByTestId('sig-connection').click();
 	await page.getByRole('option', { name: 'Unknown' }).click();
 	await expect(row.getByTestId('sig-connection')).toContainText('Unmapped');
@@ -325,9 +327,11 @@ test('row actions: EOL color, preserve mass, copy bookmark', async ({ browser, a
 	// in-game: Jita is k-space, so it takes the k-space format. Nothing has named the exit
 	// yet, so the copy takes the chain's next alias and writes it on the map.
 	await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+	// The map's naming strategy names it on the server, so the clipboard fills a moment later.
 	await row.getByLabel('Copy bookmark').click();
-	const clip = await page.evaluate(() => navigator.clipboard.readText());
-	expect(clip).toBe('1 HS WHX Jita The Forge');
+	await expect
+		.poll(() => page.evaluate(() => navigator.clipboard.readText()))
+		.toBe('1 HS WHX Jita The Forge');
 	await ctx.close();
 });
 

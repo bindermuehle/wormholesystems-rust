@@ -30,7 +30,7 @@
 		: 'py-1.5'}"
 >
 	<SortHeader column="id" {sort} {onsort} class="w-16 shrink-0">ID</SortHeader>
-	<SortHeader column="category" {sort} {onsort} class="w-20 shrink-0">Cat</SortHeader>
+	<SortHeader column="category" {sort} {onsort} class="w-26 shrink-0">Cat</SortHeader>
 	<SortHeader column="type" {sort} {onsort} class="min-w-0 flex-1">Type</SortHeader>
 	<span class="min-w-0 flex-1">Conn</span>
 	{#if showAlias}

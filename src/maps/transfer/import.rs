@@ -14,8 +14,8 @@ use crate::maps::map::Map;
 use crate::maps::solar_system::MAX_RALLY_POINTS;
 use crate::maps::store;
 use crate::maps::{
-    Actor, AliasScheme, ConnectionType, MapLayout, Role, SignatureGroup, SubjectType, SystemStatus,
-    WormholeSize, signatures,
+    Actor, AliasScheme, ConnectionType, MapLayout, NamingStrategyKind, Role, SignatureGroup,
+    SubjectType, SystemStatus, WormholeSize, signatures,
 };
 
 use super::format::{
@@ -78,6 +78,21 @@ pub async fn import_map(
     Ok(summary)
 }
 
+/// Whether the acting character may create a map from a file, so the route can refuse
+/// before it reads the file.
+pub async fn check_may_import_as_new(
+    pool: &PgPool,
+    actor: Actor,
+    creators: &AffiliationAllowlist,
+) -> Result<()> {
+    if !owns_character(pool, actor.user_id, actor.character_id).await?
+        || !crate::maps::map::may_create_map(pool, actor, creators).await?
+    {
+        return Err(MapError::Forbidden);
+    }
+    Ok(())
+}
+
 /// Create a fresh map owned by the acting character and load the payload into it. When the
 /// file carries a routes section, the seeded trade-hub watchlist makes way for the file's
 /// list. An explicit `name` wins over the file's. Creating a map this way is limited to
@@ -89,12 +104,7 @@ pub async fn import_map_as_new(
     parsed: ParsedExport,
     name: Option<String>,
 ) -> Result<Map> {
-    if !owns_character(pool, actor.user_id, actor.character_id).await? {
-        return Err(MapError::Forbidden);
-    }
-    if !crate::maps::map::may_create_map(pool, actor, creators).await? {
-        return Err(MapError::Forbidden);
-    }
+    check_may_import_as_new(pool, actor, creators).await?;
     let name = name
         .map(|n| n.trim().to_string())
         .filter(|n| !n.is_empty())
@@ -102,7 +112,7 @@ pub async fn import_map_as_new(
 
     let mut parsed = parsed;
     if let Some(settings) = &mut parsed.sections.settings {
-        settings.name = name.clone();
+        settings.name.clone_from(&name);
     }
 
     let mut tx = pool.begin().await?;
@@ -215,11 +225,15 @@ async fn import_settings(
     settings: &SettingsSection,
     counts: &mut SectionCounts,
 ) -> Result<()> {
+    #[expect(
+        clippy::as_conversions,
+        reason = "sqlx's `as` type override for a typed parameter, not a value conversion"
+    )]
     sqlx::query!(
         "update maps
          set name = $2, layout = $3, allow_layout_override = $4, alias_scheme = $5,
              ignored_alias = $6, bookmark_wormhole = $7, bookmark_kspace = $8,
-             bookmark_return = $9
+             bookmark_return = $9, naming_strategy = $10
          where id = $1",
         map_id,
         settings.name.trim(),
@@ -230,6 +244,7 @@ async fn import_settings(
         settings.bookmark_format_wormhole,
         settings.bookmark_format_kspace,
         settings.bookmark_format_return,
+        settings.naming_strategy.unwrap_or_default() as NamingStrategyKind,
     )
     .execute(&mut **tx)
     .await?;
@@ -282,7 +297,7 @@ async fn import_home_and_rally(
          where mss.id = picked.id",
         map_id,
         &rally,
-        MAX_RALLY_POINTS as i64,
+        i64::try_from(MAX_RALLY_POINTS).expect("MAX_RALLY_POINTS is a small constant"),
     )
     .execute(&mut **tx)
     .await?;
@@ -311,6 +326,10 @@ async fn import_access(
             continue;
         }
 
+        #[expect(
+            clippy::as_conversions,
+            reason = "sqlx's `as` type override for a typed parameter, not a value conversion"
+        )]
         sqlx::query!(
             "insert into map_access (map_id, subject_type, subject_id, role, expires_at)
              values ($1, $2, $3, $4, $5)
@@ -374,6 +393,10 @@ async fn import_solarsystems(
     .collect();
 
     for (id, entry) in &importable {
+        #[expect(
+            clippy::as_conversions,
+            reason = "sqlx's `as` type override for a typed parameter, not a value conversion"
+        )]
         sqlx::query!(
             "insert into map_solar_system_details
                  (map_id, solar_system_id, status, occupying_group, notes)
@@ -489,7 +512,7 @@ async fn import_connections(
 
         let pair = (from.min(to), from.max(to));
         if let Some(&id) = existing.get(&pair) {
-            ids_by_index.insert(index as i64, id);
+            ids_by_index.insert(file_index(index), id);
             counts.skipped += 1;
             continue;
         }
@@ -522,10 +545,15 @@ async fn import_connections(
         let id = store::connections::insert(tx, map_id, &row).await?;
 
         existing.insert(pair, id);
-        ids_by_index.insert(index as i64, id);
+        ids_by_index.insert(file_index(index), id);
         counts.created += 1;
     }
     Ok(ids_by_index)
+}
+
+/// A connection's position in the file, as signatures refer to it.
+fn file_index(index: usize) -> i64 {
+    i64::try_from(index).expect("a file holds far fewer than i64::MAX connections")
 }
 
 async fn import_signatures(
@@ -555,42 +583,11 @@ async fn import_signatures(
     .map(|r| (r.solar_system_id, r.signature_id))
     .collect();
 
-    // The catalog types the file names, resolved by name in one query. Same seed data on
-    // both sides, so names line up.
-    let names: Vec<String> = entries
-        .iter()
-        .filter_map(|e| e.type_name.clone())
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-    let types: HashMap<String, (i64, i64)> = sqlx::query!(
-        "select id, name, signature_category_id from signature_types where name = any($1)",
-        &names,
-    )
-    .fetch_all(&mut **tx)
-    .await?
-    .into_iter()
-    .map(|r| (r.name, (r.id, r.signature_category_id)))
-    .collect();
-
+    let types = catalog_types(tx, entries).await?;
     // A connection takes one signature per endpoint system. A file that names the same
     // connection twice from one system describes one hole scanned twice, so the first
     // claim stands and the rest come in as loose signatures.
-    // Seeded with the links the map already has, keyed by the scanner id holding each, so
-    // re-importing a file over the same map leaves a signature holding its own link.
-    let mut claimed: HashMap<(i64, i64), String> = sqlx::query!(
-        "select connection_id, solar_system_id, signature_id from signatures
-         where map_id = $1 and connection_id is not null",
-        map_id,
-    )
-    .fetch_all(&mut **tx)
-    .await?
-    .into_iter()
-    .filter_map(|r| {
-        r.connection_id
-            .map(|c| ((c, r.solar_system_id), r.signature_id))
-    })
-    .collect();
+    let mut claimed = claimed_links(tx, map_id).await?;
 
     for entry in entries {
         // This app requires the scanner id (it is the natural key), and the system must be
@@ -680,6 +677,48 @@ async fn import_signatures(
     Ok(())
 }
 
+/// The catalog types the file names, resolved by name in one query, as `(id, category)`.
+/// Same seed data on both sides, so names line up.
+async fn catalog_types(
+    tx: &mut Tx<'_>,
+    entries: &[SignatureRow],
+) -> Result<HashMap<String, (i64, i64)>> {
+    let names: Vec<String> = entries
+        .iter()
+        .filter_map(|e| e.type_name.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    Ok(sqlx::query!(
+        "select id, name, signature_category_id from signature_types where name = any($1)",
+        &names,
+    )
+    .fetch_all(&mut **tx)
+    .await?
+    .into_iter()
+    .map(|r| (r.name, (r.id, r.signature_category_id)))
+    .collect())
+}
+
+/// The links the map already has, keyed by `(connection, system)` to the scanner id
+/// holding each, so re-importing a file over the same map leaves a signature holding its
+/// own link.
+async fn claimed_links(tx: &mut Tx<'_>, map_id: i64) -> Result<HashMap<(i64, i64), String>> {
+    Ok(sqlx::query!(
+        "select connection_id, solar_system_id, signature_id from signatures
+         where map_id = $1 and connection_id is not null",
+        map_id,
+    )
+    .fetch_all(&mut **tx)
+    .await?
+    .into_iter()
+    .filter_map(|r| {
+        r.connection_id
+            .map(|c| ((c, r.solar_system_id), r.signature_id))
+    })
+    .collect())
+}
+
 async fn import_routes(
     tx: &mut Tx<'_>,
     map_id: i64,
@@ -719,7 +758,9 @@ async fn import_routes(
         }
     }
 
-    let ignored: HashSet<i64> = sqlx::query_scalar!(
+    // Grows as the loop inserts, so a file that lists a system twice counts the second as
+    // already there instead of tripping the unique key and failing the whole import.
+    let mut ignored: HashSet<i64> = sqlx::query_scalar!(
         "select solar_system_id from map_ignored_solar_systems where map_id = $1",
         map_id,
     )
@@ -732,7 +773,7 @@ async fn import_routes(
             counts.skipped += 1;
             continue;
         }
-        if ignored.contains(&entry.solarsystem_id) {
+        if !ignored.insert(entry.solarsystem_id) {
             counts.updated += 1;
             continue;
         }

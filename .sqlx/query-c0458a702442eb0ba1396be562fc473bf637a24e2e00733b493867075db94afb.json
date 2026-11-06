@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT t.access_token, t.token_expires_at, t.refresh_token, t.rejected_at,\n                      array(SELECT s.name FROM esi_token_scopes ts\n                            JOIN esi_scopes s ON s.id = ts.scope_id\n                            WHERE ts.token_id = t.id) AS \"scopes!\"\n               FROM esi_tokens t WHERE t.character_id = $1\n               ORDER BY t.updated_at DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "access_token",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "esi_tokens",
+            "name": "access_token"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "token_expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "esi_tokens",
+            "name": "token_expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "refresh_token",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "esi_tokens",
+            "name": "refresh_token"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "rejected_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "esi_tokens",
+            "name": "rejected_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "scopes!",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      false,
+      true,
+      null
+    ]
+  },
+  "hash": "c0458a702442eb0ba1396be562fc473bf637a24e2e00733b493867075db94afb"
+}

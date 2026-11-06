@@ -16,10 +16,10 @@ const CHANGED: &str = "Channel changed to Local : ";
 const LISTENER: &str = "Listener:";
 
 /// Logs untouched for longer than this belong to sessions long gone.
-const STALE: Duration = Duration::from_secs(24 * 60 * 60);
+const STALE: Duration = Duration::from_hours(24);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ChatEvent {
+pub(crate) enum ChatEvent {
     /// Where a character is, learnt without a jump: a log that was already there when the
     /// app started, or the first line of a new session.
     Located { character: String, system: String },
@@ -31,7 +31,7 @@ pub enum ChatEvent {
 }
 
 /// Where the game keeps its chat logs on this machine, the first that exists.
-pub fn default_dir() -> Option<PathBuf> {
+pub(crate) fn default_dir() -> Option<PathBuf> {
     candidates().into_iter().find(|p| p.is_dir())
 }
 
@@ -66,7 +66,7 @@ fn candidates() -> Vec<PathBuf> {
 }
 
 /// The system a log line moves Local to, if it is such a line.
-pub fn parse_change(line: &str) -> Option<&str> {
+pub(crate) fn parse_change(line: &str) -> Option<&str> {
     let (_, rest) = line.split_once("EVE System > ")?;
     let system = rest.strip_prefix(CHANGED)?.trim();
     (!system.is_empty()).then_some(system)
@@ -79,7 +79,7 @@ fn parse_listener(line: &str) -> Option<&str> {
 
 /// The character id newer clients put at the end of the file name:
 /// `Local_20261016_120000_90000001.txt`.
-pub fn character_id(path: &Path) -> Option<i64> {
+pub(crate) fn character_id(path: &Path) -> Option<i64> {
     let stem = path.file_stem()?.to_str()?;
     let parts: Vec<&str> = stem.split('_').collect();
     match parts.as_slice() {
@@ -91,7 +91,10 @@ pub fn character_id(path: &Path) -> Option<i64> {
 fn is_local_log(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
-        .is_some_and(|n| n.starts_with("Local_") && n.ends_with(".txt"))
+        .is_some_and(|n| n.starts_with("Local_"))
+        && path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("txt"))
 }
 
 #[derive(Default)]
@@ -117,10 +120,11 @@ impl LogFile {
             return Ok(Vec::new());
         }
         file.seek(SeekFrom::Start(self.offset))?;
-        let mut fresh = Vec::with_capacity((len - self.offset) as usize);
+        // Only a hint: a log too big to address is read as it comes.
+        let mut fresh = Vec::with_capacity(usize::try_from(len - self.offset).unwrap_or(0));
         file.read_to_end(&mut fresh)?;
         let at_start = self.offset == 0;
-        self.offset += fresh.len() as u64;
+        self.offset += u64::try_from(fresh.len()).expect("a read's length fits in a u64");
         let mut bytes: Vec<u8> = self.odd.take().into_iter().collect();
         bytes.extend_from_slice(&fresh);
         let bom = at_start && bytes.starts_with(&[0xFF, 0xFE]);
@@ -140,23 +144,35 @@ impl LogFile {
         let text: String = char::decode_utf16(units)
             .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
             .collect();
-        let mut text = std::mem::take(&mut self.partial) + &text;
-        let mut lines = Vec::new();
-        while let Some(end) = text.find('\n') {
-            let line: String = text.drain(..=end).collect();
-            lines.push(
-                line.trim_end_matches(['\r', '\n'])
-                    .trim_start_matches('\u{feff}')
-                    .to_string(),
-            );
-        }
-        self.partial = text;
+        let mut joined = std::mem::take(&mut self.partial);
+        joined.push_str(&text);
+        let text = joined;
+        let (lines, rest) = split_lines(&text);
+        self.partial = rest.to_string();
         lines
     }
 }
 
+/// The complete lines in `text`, without their line endings, and what follows the last
+/// newline. One pass, so the first read of a long log stays linear.
+fn split_lines(text: &str) -> (Vec<String>, &str) {
+    let (complete, rest) = match text.rfind('\n') {
+        Some(end) => text.split_at(end + 1),
+        None => ("", text),
+    };
+    let lines = complete
+        .split_terminator('\n')
+        .map(|line| {
+            line.trim_end_matches('\r')
+                .trim_start_matches('\u{feff}')
+                .to_string()
+        })
+        .collect();
+    (lines, rest)
+}
+
 /// Follows every recent Local log in one folder.
-pub struct Watcher {
+pub(crate) struct Watcher {
     dir: PathBuf,
     files: HashMap<PathBuf, LogFile>,
     /// Each character's current system, by the name in the log header.
@@ -168,7 +184,7 @@ pub struct Watcher {
 }
 
 impl Watcher {
-    pub fn new(dir: PathBuf) -> Watcher {
+    pub(crate) fn new(dir: PathBuf) -> Watcher {
         Watcher {
             dir,
             files: HashMap::new(),
@@ -178,19 +194,19 @@ impl Watcher {
         }
     }
 
-    pub fn dir(&self) -> &Path {
+    pub(crate) fn dir(&self) -> &Path {
         &self.dir
     }
 
     /// The characters seen so far, where they are, and their id when the file name had it.
-    pub fn locations(&self) -> impl Iterator<Item = (&str, &str, Option<i64>)> {
+    pub(crate) fn locations(&self) -> impl Iterator<Item = (&str, &str, Option<i64>)> {
         self.location
             .iter()
             .map(|(c, s)| (c.as_str(), s.as_str(), self.ids.get(c).copied()))
     }
 
     /// Read whatever the logs gained since the last call.
-    pub fn poll(&mut self) -> std::io::Result<Vec<ChatEvent>> {
+    pub(crate) fn poll(&mut self) -> std::io::Result<Vec<ChatEvent>> {
         let now = SystemTime::now();
         let mut found = Vec::new();
         for entry in std::fs::read_dir(&self.dir)? {
@@ -264,6 +280,21 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    #[test]
+    fn splits_complete_lines_and_keeps_the_rest() {
+        let (lines, rest) = split_lines("one\r\n\u{feff}two\n\r\nthr");
+        assert_eq!(lines, ["one", "two", ""]);
+        assert_eq!(rest, "thr");
+
+        let (lines, rest) = split_lines("no newline yet");
+        assert_eq!(lines, Vec::<String>::new());
+        assert_eq!(rest, "no newline yet");
+
+        let (lines, rest) = split_lines("ends\r\n");
+        assert_eq!(lines, ["ends"]);
+        assert_eq!(rest, "");
+    }
+
     fn utf16(text: &str) -> Vec<u8> {
         text.encode_utf16().flat_map(u16::to_le_bytes).collect()
     }
@@ -313,7 +344,7 @@ mod tests {
         let bytes = utf16(&line("Rens"));
         // Cut through the middle of a UTF-16 unit.
         let first = log.decode(&bytes[..7]);
-        assert!(first.is_empty());
+        assert_eq!(first, Vec::<String>::new());
         let mut rest = vec![log.odd.take().unwrap()];
         rest.extend_from_slice(&bytes[7..]);
         let lines = log.decode(&rest);
@@ -327,7 +358,7 @@ mod tests {
         let old = dir.path().join("Local_20261016_110000_90000001.txt");
         append(
             &old,
-            &(header("Old Timer") + &line("Jita") + &line("Perimeter")),
+            &[header("Old Timer"), line("Jita"), line("Perimeter")].concat(),
         );
 
         let mut watcher = Watcher::new(dir.path().to_path_buf());
@@ -353,11 +384,11 @@ mod tests {
                 to: "Rens".into()
             }]
         );
-        assert!(watcher.poll().unwrap().is_empty());
+        assert_eq!(watcher.poll().unwrap(), Vec::<ChatEvent>::new());
 
         // A second client logging in after the start.
         let new = dir.path().join("Local_20261016_120000_90000002.txt");
-        append(&new, &(header("Scout") + &line("J122515")));
+        append(&new, &[header("Scout"), line("J122515")].concat());
         append(&new, &line("Amarr"));
         assert_eq!(
             watcher.poll().unwrap(),

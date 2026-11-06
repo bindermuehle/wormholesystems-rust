@@ -19,7 +19,12 @@ solar_system_id: number | null,
  */
 needs_login: boolean, 
 /**
- * The ESI permissions the app uses that this character has not granted, so the UI can
+ * The required ESI permissions this character has not granted, so the UI can
  * say which of them is why something does not work for it.
  */
-missing_scopes: Array<string>, };
+missing_scopes: Array<string>, 
+/**
+ * The map a desktop app is mapping this character's jumps onto right now. The website
+ * leaves those jumps to it, so the two do not map the same one twice.
+ */
+desktop_map_id: number | null, };

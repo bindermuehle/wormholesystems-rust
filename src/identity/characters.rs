@@ -7,7 +7,7 @@ use sqlx::PgPool;
 
 use crate::allowlist::AffiliationAllowlist;
 use crate::db::PgTokenStore;
-use crate::esi::{EsiClient, EsiError, Scope, Sso};
+use crate::esi::{EsiClient, EsiError, Scope, Sso, TokenCache};
 use crate::maps::Actor;
 
 /// Why a character operation was refused.
@@ -61,6 +61,10 @@ pub struct CharacterStatus {
 /// One of the user's characters, for the switcher.
 #[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS, utoipa::ToSchema)]
 #[ts(export)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "API shape the frontend reads; each flag is independent"
+)]
 pub struct CharacterRef {
     pub character_id: i64,
     pub name: String,
@@ -74,9 +78,12 @@ pub struct CharacterRef {
     /// EVE refused this character's token (revoked, or rotated away), so it is not tracked
     /// and cannot act until it logs in again.
     pub needs_login: bool,
-    /// The ESI permissions the app uses that this character has not granted, so the UI can
+    /// The required ESI permissions this character has not granted, so the UI can
     /// say which of them is why something does not work for it.
     pub missing_scopes: Vec<String>,
+    /// The map a desktop app is mapping this character's jumps onto right now. The website
+    /// leaves those jumps to it, so the two do not map the same one twice.
+    pub desktop_map_id: Option<i64>,
 }
 
 /// One ESI permission and whether the acting character has consented to it.
@@ -85,6 +92,8 @@ pub struct CharacterRef {
 pub struct ScopeStatus {
     pub scope: String,
     pub granted: bool,
+    /// Not asked for at sign-in, and never warned about when missing.
+    pub optional: bool,
 }
 
 /// The acting character as the UI shows it, or `None` when the character is gone.
@@ -167,7 +176,7 @@ pub async fn list(pool: &PgPool, actor: Actor) -> Result<Vec<CharacterRef>> {
     .fetch_all(pool)
     .await?;
     let missing = |character_id: i64| {
-        Scope::ALL
+        Scope::REQUIRED
             .iter()
             .map(|scope| scope.as_str())
             .filter(|scope| {
@@ -189,12 +198,16 @@ pub async fn list(pool: &PgPool, actor: Actor) -> Result<Vec<CharacterRef>> {
             online: r.online,
             solar_system_id: r.solar_system_id,
             needs_login: r.needs_login,
+            desktop_map_id: crate::pilots::desktop::mapping_on(r.id),
         })
         .collect())
 }
 
 /// The ESI scopes a character has consented to, across every token we hold for them.
-pub async fn granted_scopes(pool: &PgPool, character_id: i64) -> Vec<Scope> {
+///
+/// An error stays an error: the login that tops up scopes asks SSO for these plus the new
+/// ones, and SSO replaces the token wholesale, so reading "none" here would revoke them.
+pub async fn granted_scopes(pool: &PgPool, character_id: i64) -> Result<Vec<Scope>> {
     let names = sqlx::query_scalar!(
         "select distinct s.name
          from esi_tokens t
@@ -204,22 +217,22 @@ pub async fn granted_scopes(pool: &PgPool, character_id: i64) -> Vec<Scope> {
         character_id,
     )
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-    names.iter().filter_map(|n| Scope::parse(n)).collect()
+    .await?;
+    Ok(names.iter().filter_map(|n| Scope::parse(n)).collect())
 }
 
 /// Every ESI permission the app can use, and whether this character has granted it.
 /// Always the full list, so the UI can show what is missing.
-pub async fn scopes(pool: &PgPool, character_id: i64) -> Vec<ScopeStatus> {
-    let granted = granted_scopes(pool, character_id).await;
-    Scope::ALL
+pub async fn scopes(pool: &PgPool, character_id: i64) -> Result<Vec<ScopeStatus>> {
+    let granted = granted_scopes(pool, character_id).await?;
+    Ok(Scope::ALL
         .iter()
         .map(|scope| ScopeStatus {
             scope: scope.as_str().to_string(),
             granted: granted.contains(scope),
+            optional: scope.is_optional(),
         })
-        .collect()
+        .collect())
 }
 
 async fn owns(pool: &PgPool, user_id: i64, character_id: i64) -> Result<bool> {
@@ -283,17 +296,13 @@ pub async fn remove(
     Ok(())
 }
 
-/// Where a waypoint goes, and how it joins the route already set.
-#[derive(Debug, Clone, Copy)]
-pub struct Waypoint {
-    pub destination_id: i64,
-    pub add_to_beginning: bool,
-    pub clear_other_waypoints: bool,
-}
+pub use crate::esi::ui::Waypoint;
 
 /// The two ESI handles a waypoint needs: SSO for the character's token, ESI for the call.
+#[derive(Debug)]
 pub struct Esi<'a> {
     pub sso: &'a Sso,
+    pub tokens: &'a TokenCache,
     pub esi: &'a EsiClient,
 }
 
@@ -373,21 +382,18 @@ async fn send_waypoint(
 ) -> Result<()> {
     let store = PgTokenStore::new(pool.clone());
     let token = esi
-        .sso
-        .access_token(&store, character_id, Scope::WriteWaypoint)
+        .tokens
+        .token(esi.sso, &store, character_id, &[Scope::WriteWaypoint])
         .await
         .map_err(|err| match err {
-            EsiError::MissingScope(_) => CharacterError::MissingScope,
             EsiError::TokenRejected => CharacterError::SignedOut,
             other => CharacterError::Upstream(other),
         })?;
+    if !token.has_scope(Scope::WriteWaypoint) {
+        return Err(CharacterError::MissingScope);
+    }
     esi.esi
-        .set_waypoint(
-            &token,
-            waypoint.destination_id,
-            waypoint.add_to_beginning,
-            waypoint.clear_other_waypoints,
-        )
+        .set_waypoint(&token.access_token, waypoint)
         .await
         .map_err(CharacterError::Upstream)
 }

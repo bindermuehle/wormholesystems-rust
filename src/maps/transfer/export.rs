@@ -71,7 +71,7 @@ pub async fn export_map(
 
 async fn export_settings(pool: &PgPool, map_id: i64) -> Result<SettingsSection> {
     let row = sqlx::query!(
-        r#"select name, layout, allow_layout_override, alias_scheme, ignored_alias,
+        r#"select name, layout, allow_layout_override, alias_scheme, naming_strategy, ignored_alias,
                   bookmark_wormhole, bookmark_kspace, bookmark_return,
                   (select solar_system_id from map_solar_systems
                    where map_id = m.id and is_home) as "home?",
@@ -94,6 +94,7 @@ async fn export_settings(pool: &PgPool, map_id: i64) -> Result<SettingsSection> 
         bookmark_format_kspace: row.bookmark_kspace,
         bookmark_format_return: row.bookmark_return,
         bookmark_alias_scheme: row.alias_scheme,
+        naming_strategy: Some(row.naming_strategy),
         bookmark_ignored_alias: Some(row.ignored_alias).filter(|a| !a.is_empty()),
         home_solarsystem_id: row.home,
         rally_solarsystem_ids: Some(row.rally),
@@ -238,7 +239,10 @@ async fn export_connections(
         let (Some(from_ss), Some(to_ss)) = (row.from_ss, row.to_ss) else {
             continue;
         };
-        indexes.insert(row.id, exported.len() as i64);
+        indexes.insert(
+            row.id,
+            i64::try_from(exported.len()).expect("a map holds far fewer than i64::MAX connections"),
+        );
         exported.push(ConnectionRow {
             from_solarsystem_id: from_ss,
             to_solarsystem_id: to_ss,

@@ -10,7 +10,6 @@ import { solarSystemId, type MappedSystem } from '$lib/map/system';
 import type { CharacterRef } from '$lib/api/types/CharacterRef';
 import type { GridConfig } from '$lib/api/types/GridConfig';
 import type { MapConnection } from '$lib/api/types/MapConnection';
-import type { MapNaming } from '$lib/api/types/MapNaming';
 import type { MapSystemView } from '$lib/api/types/MapSystemView';
 import type { MapUserSettings } from '$lib/api/types/MapUserSettings';
 import type { ResolveGhostSystem } from '$lib/api/types/ResolveGhostSystem';
@@ -18,11 +17,8 @@ import type { Signature } from '$lib/api/types/Signature';
 import type { SignatureCatalog } from '$lib/api/types/SignatureCatalog';
 import type { SystemSearchResult } from '$lib/api/types/SystemSearchResult';
 import type { TrackJump } from '$lib/api/types/TrackJump';
-import { aliasTargetKind, suggestAlias } from '$lib/naming/alias';
-import { echoContextFor, type ScannedHole } from '$lib/naming/echo-context';
 import { freePosition } from '$lib/map/geometry';
 import { sizeForJumpMass } from '$lib/map/mass';
-import { classMeta, isWormholeClass } from '$lib/map/classes';
 import { typeById } from '$lib/map/signatures';
 import { groupSignatures, type SignatureGroups } from '$lib/signatures/compatibility';
 
@@ -35,6 +31,7 @@ export interface JumpPrompt {
 	targetName: string;
 	targetClassId: number | null;
 	targetSecurity: number;
+	targetRegion: string;
 	/** The placement the target already has on the map, if it was reached another way. */
 	existing: MappedSystem | null;
 	groups: SignatureGroups;
@@ -71,6 +68,7 @@ function statusFromSignature(signature: Signature | null) {
  * eagerly-built request promises.
  */
 export interface TrackerHost {
+	mapId(): number;
 	myCharacters(): CharacterRef[];
 	systems(): MapSystemView[];
 	connections(): MapConnection[];
@@ -80,7 +78,8 @@ export interface TrackerHost {
 		MapUserSettings,
 		'tracking_allowed' | 'prompt_for_signature' | 'suggest_alias' | 'tracked_character_ids'
 	> | null;
-	naming(): MapNaming | null;
+	/** The alias the map's naming strategy gives a system reached from `origin`. */
+	suggestAlias(origin: number, targetSystem: number): Promise<string | null>;
 	/** The map's ignore list: a jump into one of these is flown, not mapped. */
 	ignored(): Set<number>;
 	stargates(): Map<number, number[]> | null;
@@ -129,6 +128,9 @@ export class JumpTracker {
 			const prev = { characterId, systemId: this.seen.get(characterId) ?? null };
 			seen.set(characterId, next.systemId);
 			const jump = detectJump(prev, next);
+			// A desktop app watching this pilot maps their jumps the moment they happen;
+			// mapping them here too only races it.
+			if (pilot.desktop_map_id === this.map.mapId()) continue;
 			if (jump) jumps.push({ ...jump, pilot: pilot.name });
 		}
 		// A pilot dropped from the set starts over when brought back, rather than arriving
@@ -183,20 +185,29 @@ export class JumpTracker {
 			// here: that is the one just flown.
 			if (ghosts.size === 1) {
 				const [ghost] = ghosts.values();
-				this.resolve(ghost, toSystemId);
+				// A hole scanned and named before anyone flew it keeps that name.
+				const named = map.systems().find((s) => s.id === ghost)?.alias;
+				const alias = named ? undefined : await this.suggestAliasFor(origin, toSystemId, existing);
+				this.resolve(ghost, toSystemId, { alias: alias?.trim() || undefined });
 				return;
 			}
 			this.submit({
 				origin,
 				targetSolarSystemId: toSystemId,
 				signaturePk: null,
-				alias: this.suggestAliasFor(origin, target, existing, null, catalog),
+				alias: await this.suggestAliasFor(origin, toSystemId, existing),
 				at: this.placeNear(origin),
 			});
 			return;
 		}
 
 		// One question at a time: a second pilot's jump waits its turn.
+		if (this.prompt !== null) {
+			this.queued.push({ from: fromSystemId, to: toSystemId, pilot });
+			return;
+		}
+		const suggestedAlias = await this.suggestAliasFor(origin, toSystemId, existing);
+		// Another jump may have opened one while the server was asked.
 		if (this.prompt !== null) {
 			this.queued.push({ from: fromSystemId, to: toSystemId, pilot });
 			return;
@@ -208,18 +219,11 @@ export class JumpTracker {
 			targetName: target.name,
 			targetClassId: target.classId,
 			targetSecurity: target.security,
+			targetRegion: target.region,
 			existing,
 			groups,
 			catalog,
-			// Before the pilot picks, the only unambiguous hole is a single likely candidate;
-			// TrackingForm asks again once they choose.
-			suggestedAlias: this.suggestAliasFor(
-				origin,
-				target,
-				existing,
-				this.holeFor(groups.likely.length === 1 ? groups.likely[0] : null, catalog),
-				catalog,
-			),
+			suggestedAlias,
 			ghostAliases: ghostAliases(ghosts, originSignatures, map.systems()),
 			at: this.placeNear(origin),
 		};
@@ -232,88 +236,29 @@ export class JumpTracker {
 				name: existing.name,
 				classId: existing.wormhole_class_id,
 				security: existing.security_status,
+				region: existing.region,
 			};
 		}
 		const hit = await this.map.resolveSystem(id);
 		if (!hit) return null;
-		return { name: hit.name, classId: hit.wormhole_class_id, security: hit.security };
-	}
-
-	/**
-	 * The hole the echo scheme should read, as a signature or null when the jump has not
-	 * said which one it was. Without it a hole flown out of home cannot be recognised as
-	 * home's static, so it is named like any other link rather than taking the `s` slot.
-	 */
-	private holeFor(
-		signature: Signature | null,
-		catalog: SignatureCatalog | null,
-	): ScannedHole | null {
-		if (!signature) return null;
 		return {
-			id: signature.id,
-			code: catalog ? (typeById(catalog, signature.signature_type_id)?.signature ?? null) : null,
-			created_at: signature.created_at,
+			name: hit.name,
+			classId: hit.wormhole_class_id,
+			security: hit.security,
+			region: hit.region,
 		};
 	}
 
-	private suggestAliasFor(
+	private async suggestAliasFor(
 		origin: MappedSystem,
-		target: { classId: number | null; security: number },
+		targetSystem: number,
 		existing: MappedSystem | null,
-		hole: ScannedHole | null = null,
-		catalog: SignatureCatalog | null = null,
-	): string | null {
+	): Promise<string | null> {
 		// A system already on the map keeps the name the chain knows it by.
 		if (existing?.alias) return existing.alias;
 		if (!this.map.settings()?.suggest_alias) return null;
-
-		const naming = this.map.naming();
-		const targetIsWormhole = isWormholeClass(target.classId);
-		const originSolarSystemId = solarSystemId(origin);
-		return suggestAlias({
-			parentAlias: origin.alias,
-			targetIsWormhole,
-			originIsWormhole: isWormholeClass(origin.wormhole_class_id),
-			aliases: this.map
-				.systems()
-				.map((s) => s.alias)
-				.filter((alias): alias is string => Boolean(alias)),
-			scheme: naming?.alias_scheme,
-			targetKind: aliasTargetKind(
-				targetIsWormhole,
-				classMeta(target.classId, target.security).short,
-			),
-			ignoredAlias: naming?.ignored_alias,
-			// Only the echo scheme reads this; the other two ignore it.
-			echo: echoContextFor({
-				systems: this.map.systems(),
-				connections: this.map.connections(),
-				originSystemId: origin.id,
-				targetClassId: target.classId,
-				hole,
-				holesInOrigin: this.map
-					.sigs()
-					.filter((s) => s.solar_system_id === originSolarSystemId)
-					.map((s) => this.holeFor(s, catalog))
-					.filter((h): h is ScannedHole => h !== null),
-			}),
-		});
-	}
-
-	/**
-	 * The alias for a prompt once the pilot has said which signature they flew. The first
-	 * suggestion is made before that is known, and under the echo scheme the answer
-	 * depends on it: the same jump out of home is `a5s` through the static and `b5a`
-	 * through a wandering hole of the same class.
-	 */
-	suggestAliasForSignature(prompt: JumpPrompt, signature: Signature | null): string | null {
-		return this.suggestAliasFor(
-			prompt.origin,
-			{ classId: prompt.targetClassId, security: prompt.targetSecurity },
-			prompt.existing,
-			this.holeFor(signature, prompt.catalog),
-			prompt.catalog,
-		);
+		// A name is a nicety: the jump still goes on the map without one.
+		return this.map.suggestAlias(origin.id, targetSystem).catch(() => null);
 	}
 
 	/** The first free slot beside the system jumped from. */

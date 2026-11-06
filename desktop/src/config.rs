@@ -2,7 +2,8 @@
 //! personal access token, so on Unix the file is readable by its owner only.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
@@ -10,11 +11,11 @@ use serde::{Deserialize, Serialize};
 use crate::hotkeys::Action;
 use crate::theme::Appearance;
 
-pub const DEFAULT_SERVER: &str = "https://wormhole.systems";
+pub(crate) const DEFAULT_SERVER: &str = "https://wormhole.systems";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct Config {
+pub(crate) struct Config {
     pub server: String,
     pub token: String,
     pub map_id: Option<i64>,
@@ -41,7 +42,7 @@ pub struct Config {
 /// The signature list's category filter and sort, like the website's panel.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct ListView {
+pub(crate) struct ListView {
     /// Categories left out. The hidden set is what is kept, so a new category shows.
     pub hidden: Vec<String>,
     pub sort: SortColumn,
@@ -60,7 +61,7 @@ impl Default for ListView {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SortColumn {
+pub(crate) enum SortColumn {
     Id,
     Category,
     Type,
@@ -70,7 +71,11 @@ pub enum SortColumn {
 /// The signatures window that floats over the game.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct Overlay {
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "the settings file's shape: independent switches, each its own key"
+)]
+pub(crate) struct Overlay {
     pub open: bool,
     /// Where it sits until it is dragged somewhere.
     pub corner: Corner,
@@ -97,28 +102,31 @@ pub struct Overlay {
 }
 
 /// Distance from the screen edges of an overlay in its corner.
-pub const OVERLAY_MARGIN: f32 = 24.0;
+pub(crate) const OVERLAY_MARGIN: f32 = 24.0;
 
 impl Overlay {
     /// Width and height in logical pixels.
-    pub fn dimensions(&self) -> (f32, f32) {
+    pub(crate) fn dimensions(&self) -> (f32, f32) {
         let (w, h) = self.size.dimensions();
         (self.width.unwrap_or(w), self.height.unwrap_or(h))
     }
 
     /// The top-left corner on a `screen` of that size: where it was dragged, else its
     /// corner. Kept on the screen, which may have changed since.
-    pub fn origin(&self, screen: (f32, f32)) -> (f32, f32) {
-        let (w, h) = self.dimensions();
-        let m = OVERLAY_MARGIN;
+    pub(crate) fn origin(&self, screen: (f32, f32)) -> (f32, f32) {
+        let (width, height) = self.dimensions();
+        let margin = OVERLAY_MARGIN;
         let (cx, cy) = match self.corner {
-            Corner::TopLeft => (m, m),
-            Corner::TopRight => (screen.0 - w - m, m),
-            Corner::BottomLeft => (m, screen.1 - h - m),
-            Corner::BottomRight => (screen.0 - w - m, screen.1 - h - m),
+            Corner::TopLeft => (margin, margin),
+            Corner::TopRight => (screen.0 - width - margin, margin),
+            Corner::BottomLeft => (margin, screen.1 - height - margin),
+            Corner::BottomRight => (screen.0 - width - margin, screen.1 - height - margin),
         };
-        let x = self.x.unwrap_or(cx).clamp(0.0, (screen.0 - w).max(0.0));
-        let y = self.y.unwrap_or(cy).clamp(0.0, (screen.1 - h).max(0.0));
+        let x = self.x.unwrap_or(cx).clamp(0.0, (screen.0 - width).max(0.0));
+        let y = self
+            .y
+            .unwrap_or(cy)
+            .clamp(0.0, (screen.1 - height).max(0.0));
         (x, y)
     }
 }
@@ -145,7 +153,7 @@ impl Default for Overlay {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Corner {
+pub(crate) enum Corner {
     TopLeft,
     TopRight,
     BottomLeft,
@@ -154,7 +162,7 @@ pub enum Corner {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum OverlaySize {
+pub(crate) enum OverlaySize {
     Small,
     Medium,
     Large,
@@ -162,7 +170,7 @@ pub enum OverlaySize {
 
 impl OverlaySize {
     /// Width and height in logical pixels.
-    pub fn dimensions(self) -> (f32, f32) {
+    pub(crate) fn dimensions(self) -> (f32, f32) {
         match self {
             OverlaySize::Small => (440.0, 300.0),
             OverlaySize::Medium => (560.0, 420.0),
@@ -190,7 +198,7 @@ impl Default for Config {
     }
 }
 
-pub fn path() -> Option<PathBuf> {
+pub(crate) fn path() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("wormholesystems").join("desktop.toml"))
 }
 
@@ -198,7 +206,7 @@ impl Config {
     /// The saved config, or the defaults when there is none. One that does not parse is
     /// moved aside to `desktop.toml.broken` rather than overwritten by the next save, and
     /// the second value says so.
-    pub fn load() -> (Config, Option<String>) {
+    pub(crate) fn load() -> (Config, Option<String>) {
         let Some(path) = path() else {
             return (Config::default(), None);
         };
@@ -227,17 +235,63 @@ impl Config {
         }
     }
 
-    pub fn save(&self) -> Result<()> {
+    pub(crate) fn save(&self) -> Result<()> {
         let path = path().context("no config folder on this system")?;
+        self.save_to(&path)
+    }
+
+    /// Replace the file in one step, readable by its owner alone from the start: it holds
+    /// the token, so it is never world-readable even briefly, and a crash halfway leaves the
+    /// old file rather than half a new one.
+    fn save_to(&self, path: &Path) -> Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(&path, toml::to_string_pretty(self)?)?;
+        let text = toml::to_string_pretty(self)?;
+        let temp = path.with_extension("toml.tmp");
+        // Left over from an earlier crash, it would keep whatever mode it was made with.
+        let _ = std::fs::remove_file(&temp);
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let written = options.open(&temp).and_then(|mut file| {
+            file.write_all(text.as_bytes())?;
+            file.sync_all()
+        });
+        written.with_context(|| format!("could not write {}", temp.display()))?;
+        std::fs::rename(&temp, path)
+            .with_context(|| format!("could not replace {}", path.display()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_saved_config_is_private_and_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wormholesystems").join("desktop.toml");
+        let mut config = Config {
+            token: "wst_first".into(),
+            ..Config::default()
+        };
+        config.save_to(&path).unwrap();
+        config.token = "wst_second".into();
+        config.save_to(&path).unwrap();
+
+        let saved: Config = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved.token, "wst_second");
+        assert!(!path.with_extension("toml.tmp").exists());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
         }
-        Ok(())
     }
 }

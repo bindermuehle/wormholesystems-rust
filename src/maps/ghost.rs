@@ -90,11 +90,18 @@ pub(super) async fn reconcile(
     tx: &mut Tx<'_>,
     map_id: i64,
 ) -> Result<(Vec<MapCommand>, Vec<MapEvent>)> {
-    // The map still has to exist; a command against one that does not owes it nothing.
-    let wanted = sqlx::query_scalar!("select id from maps where id = $1", map_id)
+    // Every map raises its scanned holes, so a hole can carry its name before anyone flies
+    // it; `ghost_unlinked_wormholes` only says whether they are drawn. The map still has to
+    // exist: a command against one that does not owes it nothing.
+    let wanted = if sqlx::query_scalar!("select id from maps where id = $1", map_id)
         .fetch_optional(&mut **tx)
         .await?
-        .is_some();
+        .is_some()
+    {
+        Ghosts::Wanted
+    } else {
+        Ghosts::Unwanted
+    };
 
     let mut undo = Vec::new();
     let mut events = Vec::new();
@@ -106,7 +113,7 @@ pub(super) async fn reconcile(
             map_solar_system_id: *id,
         }));
     }
-    if wanted {
+    if wanted == Ghosts::Wanted {
         let (raised, raised_events) = raise_unmapped_holes(tx, map_id).await?;
         events.extend(raised_events);
         if !raised.is_empty() {
@@ -122,13 +129,21 @@ pub(super) async fn reconcile(
     Ok((undo, events))
 }
 
+/// Whether the map raises ghosts for unlinked wormholes. On this fork every existing map
+/// does; `maps.ghost_unlinked_wormholes` decides whether they are drawn, not whether they exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ghosts {
+    Wanted,
+    Unwanted,
+}
+
 /// The ghosts the map no longer owes: those whose scan has stopped being an unmapped
 /// wormhole, whether it was retyped, linked to a real system or unlinked from this node,
 /// and, on a map that wants none, all of them. A scan that has been deleted outright, or a
 /// system that has been taken off the map, are the database's business rather than ours:
 /// both cascade. Home, pinned and rally nodes are deliberate markers and survive here as
 /// they do everywhere else.
-async fn unclaimed_ghosts(tx: &mut Tx<'_>, map_id: i64, wanted: bool) -> Result<Vec<i64>> {
+async fn unclaimed_ghosts(tx: &mut Tx<'_>, map_id: i64, wanted: Ghosts) -> Result<Vec<i64>> {
     Ok(sqlx::query_scalar!(
         r#"select g.id as "id!" from map_solar_systems g
            join signatures s on s.id = g.raised_by_signature_id
@@ -143,7 +158,7 @@ async fn unclaimed_ghosts(tx: &mut Tx<'_>, map_id: i64, wanted: bool) -> Result<
                         and (c.from_system = g.id or c.to_system = g.id)
                   ))"#,
         map_id,
-        wanted,
+        wanted == Ghosts::Wanted,
     )
     .fetch_all(&mut **tx)
     .await?)
@@ -454,6 +469,57 @@ pub(super) async fn apply_resolve_ghost_system(
 
     // Whatever survives the merge is what carries the alias; the ghost row may not.
     let surviving = existing.unwrap_or(cmd.map_solar_system_id);
+    let twin = match existing {
+        Some(target) => twin_of(tx, cmd.map_id, cmd.map_solar_system_id, target).await?,
+        None => None,
+    };
+    let (undo, events) = carry_details(tx, &cmd, surviving, twin.map(|t| t.existing)).await?;
+
+    let effect = if let (Some(target), Some(twin)) = (existing, twin) {
+        fold(tx, cmd.map_id, cmd.map_solar_system_id, target, twin, &name).await
+    } else if let Some(target) = existing {
+        merge(tx, cmd.map_id, cmd.map_solar_system_id, target, &name).await
+    } else {
+        let was = Raised {
+            signature_pk: placement.raised_by_signature_id.ok_or(MapError::NotFound)?,
+            from_system: placement.hangs_off_id.ok_or(MapError::NotFound)?,
+        };
+        let placed =
+            placements::assign_system(tx, cmd.map_id, cmd.map_solar_system_id, solar_system_id)
+                .await?;
+        claim_pending_for(tx, cmd.map_id, cmd.map_solar_system_id, solar_system_id).await?;
+        Ok(Effect::new(
+            "systems.details",
+            format!("scanned that hole as {name}"),
+            CommandOutput::System(Box::new(placed)),
+        )
+        .undo_with(MapCommand::ResolveGhostSystem(
+            ResolveGhostSystem::unresolve(cmd.map_id, cmd.map_solar_system_id, was),
+        ))
+        .emit(MapEvent::SystemDetailsChanged {
+            map_id: cmd.map_id,
+            map_solar_system_id: cmd.map_solar_system_id,
+        })
+        // The system arrives on the map now, not when its ghost was drawn: alerts
+        // measure from here.
+        .emit(MapEvent::SystemAdded {
+            map_id: cmd.map_id,
+            map_solar_system_id: cmd.map_solar_system_id,
+        }))
+    }?;
+
+    Ok(with_undo_steps(cmd.map_id, undo, effect).emit_all(events))
+}
+
+/// Set the alias and connection status the resolve carries, on whichever node survives the
+/// merge. The status goes on `connection` when the ghost's own edge is about to be folded
+/// into it. Returns their undo steps and events.
+async fn carry_details(
+    tx: &mut Tx<'_>,
+    cmd: &ResolveGhostSystem,
+    surviving: i64,
+    connection: Option<i64>,
+) -> Result<(Vec<MapCommand>, Vec<MapEvent>)> {
     let mut undo = Vec::new();
     let mut events = Vec::new();
     if let Some(alias) = cmd.alias.clone() {
@@ -471,15 +537,20 @@ pub(super) async fn apply_resolve_ghost_system(
     }
     if cmd.size.is_some() || cmd.mass_status.is_some() || cmd.time_status.is_some() {
         // Connections keep their id through a merge, so this holds either way.
-        let connection_id = sqlx::query_scalar!(
-            "select id from map_connections
-             where map_id = $1 and (from_system = $2 or to_system = $2)
-             order by id limit 1",
-            cmd.map_id,
-            cmd.map_solar_system_id,
-        )
-        .fetch_optional(&mut **tx)
-        .await?;
+        let connection_id = match connection {
+            Some(id) => Some(id),
+            None => {
+                sqlx::query_scalar!(
+                    "select id from map_connections
+                     where map_id = $1 and (from_system = $2 or to_system = $2)
+                     order by id limit 1",
+                    cmd.map_id,
+                    cmd.map_solar_system_id,
+                )
+                .fetch_optional(&mut **tx)
+                .await?
+            }
+        };
         if let Some(connection_id) = connection_id {
             let effect = super::connection::apply_set_connection_status(
                 tx,
@@ -498,34 +569,7 @@ pub(super) async fn apply_resolve_ghost_system(
             events.extend(effect.events);
         }
     }
-
-    let effect = match existing {
-        Some(target) => merge(tx, cmd.map_id, cmd.map_solar_system_id, target, &name).await,
-        None => {
-            let was = Raised {
-                signature_pk: placement.raised_by_signature_id.ok_or(MapError::NotFound)?,
-                from_system: placement.hangs_off_id.ok_or(MapError::NotFound)?,
-            };
-            let placed =
-                placements::assign_system(tx, cmd.map_id, cmd.map_solar_system_id, solar_system_id)
-                    .await?;
-            claim_pending_for(tx, cmd.map_id, cmd.map_solar_system_id, solar_system_id).await?;
-            Ok(Effect::new(
-                "systems.details",
-                format!("scanned that hole as {name}"),
-                CommandOutput::System(Box::new(placed)),
-            )
-            .undo_with(MapCommand::ResolveGhostSystem(
-                ResolveGhostSystem::unresolve(cmd.map_id, cmd.map_solar_system_id, was),
-            ))
-            .emit(MapEvent::SystemDetailsChanged {
-                map_id: cmd.map_id,
-                map_solar_system_id: cmd.map_solar_system_id,
-            }))
-        }
-    }?;
-
-    Ok(with_undo_steps(cmd.map_id, undo, effect).emit_all(events))
+    Ok((undo, events))
 }
 
 /// Put the alias and status back before the node itself goes, so one jump is one undo.
@@ -601,6 +645,130 @@ async fn unresolve(
         map_id: cmd.map_id,
         map_solar_system_id: cmd.map_solar_system_id,
     }))
+}
+
+/// A ghost's edge that the map already has another copy of: the ghost hangs off a system
+/// that is already connected to the one it turned out to be.
+#[derive(Debug, Clone, Copy)]
+struct Twin {
+    /// The ghost's own edge.
+    ghost: i64,
+    /// The edge between the same two systems the map already had.
+    existing: i64,
+}
+
+/// The ghost's edge that merging it into `target` would duplicate. That happens when the
+/// same jump is mapped twice at once, once as a new system and once as this ghost.
+async fn twin_of(tx: &mut Tx<'_>, map_id: i64, ghost_id: i64, target: i64) -> Result<Option<Twin>> {
+    let row = sqlx::query!(
+        r#"select c.id as ghost, d.id as existing
+           from map_connections c
+           join map_connections d
+             on d.map_id = c.map_id and d.id <> c.id
+            and (d.from_system, d.to_system) in (
+                (case when c.from_system = $2 then c.to_system else c.from_system end, $3),
+                ($3, case when c.from_system = $2 then c.to_system else c.from_system end))
+           where c.map_id = $1 and $2 in (c.from_system, c.to_system)
+           order by c.id, d.id
+           limit 1"#,
+        map_id,
+        ghost_id,
+        target,
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(row.map(|r| Twin {
+        ghost: r.ghost,
+        existing: r.existing,
+    }))
+}
+
+/// The ghost is a hole the map already has: its scan moves to the existing edge, its own
+/// edge goes, and whatever else it was connected to is merged as usual.
+async fn fold(
+    tx: &mut Tx<'_>,
+    map_id: i64,
+    ghost_id: i64,
+    target: i64,
+    twin: Twin,
+    name: &str,
+) -> Result<Effect> {
+    let scans = sqlx::query_scalar!(
+        "select id from signatures where map_id = $1 and connection_id = $2 order by id",
+        map_id,
+        twin.ghost,
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let mut undo = Vec::new();
+    let mut events = Vec::new();
+    for signature_pk in scans {
+        let linked = super::signatures::apply_link_signature(
+            tx,
+            super::signatures::LinkSignature {
+                map_id,
+                signature_pk,
+                connection_id: twin.existing,
+            },
+        )
+        .await?;
+        undo.extend(linked.inverse);
+        events.extend(linked.events);
+    }
+
+    // Takes the ghost with it, unless it is held by something else (a pin, another edge).
+    let removed = super::connection::apply_remove_connection(
+        tx,
+        super::connection::RemoveConnection {
+            map_id,
+            connection_id: twin.ghost,
+        },
+    )
+    .await?;
+    undo.extend(removed.inverse);
+    events.extend(removed.events);
+
+    let still_there = sqlx::query_scalar!(
+        "select exists(select 1 from map_solar_systems where id = $1 and map_id = $2)",
+        ghost_id,
+        map_id,
+    )
+    .fetch_one(&mut **tx)
+    .await?
+    .unwrap_or(false);
+    let placed = if still_there {
+        let merged = merge(tx, map_id, ghost_id, target, name).await?;
+        undo.extend(merged.inverse);
+        events.extend(merged.events);
+        merged.output.take::<MapSolarSystem>()?
+    } else {
+        sqlx::query_as!(
+            MapSolarSystem,
+            "select id, map_id, solar_system_id, position_x, position_y, alias, created_at
+             from map_solar_systems where id = $1",
+            target,
+        )
+        .fetch_one(&mut **tx)
+        .await?
+    };
+    events.push(MapEvent::SystemDetailsChanged {
+        map_id,
+        map_solar_system_id: target,
+    });
+
+    // Undone last to first: the edge comes back before its scan is linked to it again.
+    undo.reverse();
+    Ok(Effect::new(
+        "systems.details",
+        format!("scanned that hole as {name}, already connected"),
+        CommandOutput::System(Box::new(placed)),
+    )
+    .undo_with(MapCommand::Sequence(Sequence {
+        map_id,
+        steps: undo,
+    }))
+    .emit_all(events))
 }
 
 /// The ghost turned out to be a system already on the map: hand its edges over and drop
@@ -834,58 +1002,6 @@ pub(super) async fn apply_restore_ghost_system(
     )
     .undo_with(inverse)
     .emit_all(events))
-}
-
-/// The nodes these scans raised. Deleting a scan takes them by the foreign key, so this is
-/// asked beforehand, while they are still there to be named.
-pub(super) async fn raised_by(
-    tx: &mut Tx<'_>,
-    map_id: i64,
-    signature_pks: &[i64],
-) -> Result<Vec<i64>> {
-    Ok(sqlx::query_scalar!(
-        "select id from map_solar_systems
-         where map_id = $1 and raised_by_signature_id = any($2)",
-        map_id,
-        signature_pks,
-    )
-    .fetch_all(&mut **tx)
-    .await?)
-}
-
-/// The ghosts that removing these placements or connections would strand. A ghost with no
-/// connection left is not a place at all and goes with whatever it hung off; real systems
-/// are left alone even when they end up edgeless. Asked before the deletion, so the caller
-/// can fold the answer into its snapshot and undo restores both in one step.
-pub(super) async fn stranded_ghosts(
-    tx: &mut Tx<'_>,
-    map_id: i64,
-    removed_systems: &[i64],
-    removed_connections: &[i64],
-) -> Result<Vec<i64>> {
-    Ok(sqlx::query_scalar!(
-        r#"select g.id as "id!" from map_solar_systems g
-           where g.map_id = $1
-             and g.solar_system_id is null
-             and not g.is_home and not g.is_pinned and not g.is_rally
-             and exists (
-                 select 1 from map_connections c
-                 where c.map_id = $1 and (c.from_system = g.id or c.to_system = g.id)
-             )
-             and not exists (
-                 select 1 from map_connections c
-                 where c.map_id = $1
-                   and (c.from_system = g.id or c.to_system = g.id)
-                   and c.id <> all($3)
-                   and c.from_system <> all($2)
-                   and c.to_system <> all($2)
-             )"#,
-        map_id,
-        removed_systems,
-        removed_connections,
-    )
-    .fetch_all(&mut **tx)
-    .await?)
 }
 
 /// A hole is often flown before it is named. Once the far side is known, transits that

@@ -20,6 +20,7 @@ pub mod identity;
 pub mod ignored;
 pub mod killmails;
 pub mod maps;
+pub mod naming;
 pub mod reference;
 pub mod search;
 pub mod signatures;
@@ -72,42 +73,60 @@ pub struct ApiError {
 }
 
 /// What every error answers with.
-#[derive(Serialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ErrorBody {
     pub error: String,
 }
 
 // The error responses, named once so every handler can point at the same description.
 // They exist for the document only; the field is what says the body is an `ErrorBody`.
-#[allow(dead_code)]
-#[derive(ToResponse)]
+#[expect(
+    dead_code,
+    reason = "only described in the OpenAPI document, never built"
+)]
+#[derive(Debug, ToResponse)]
 #[response(
     description = "The request does not make sense: a missing field, a value out of range, or a body naming a different map than the URL"
 )]
 pub struct BadRequest(ErrorBody);
 
-#[allow(dead_code)]
-#[derive(ToResponse)]
+#[expect(
+    dead_code,
+    reason = "only described in the OpenAPI document, never built"
+)]
+#[derive(Debug, ToResponse)]
 #[response(description = "Nobody is signed in, or the bearer token is unknown, revoked or expired")]
 pub struct Unauthorized(ErrorBody);
 
-#[allow(dead_code)]
-#[derive(ToResponse)]
+#[expect(
+    dead_code,
+    reason = "only described in the OpenAPI document, never built"
+)]
+#[derive(Debug, ToResponse)]
 #[response(description = "Signed in, but the role on this map does not allow it")]
 pub struct Forbidden(ErrorBody);
 
-#[allow(dead_code)]
-#[derive(ToResponse)]
+#[expect(
+    dead_code,
+    reason = "only described in the OpenAPI document, never built"
+)]
+#[derive(Debug, ToResponse)]
 #[response(description = "No such thing, or not one the caller may know about")]
 pub struct NotFound(ErrorBody);
 
-#[allow(dead_code)]
-#[derive(ToResponse)]
+#[expect(
+    dead_code,
+    reason = "only described in the OpenAPI document, never built"
+)]
+#[derive(Debug, ToResponse)]
 #[response(description = "The change contradicts the map's current state")]
 pub struct Conflict(ErrorBody);
 
-#[allow(dead_code)]
-#[derive(ToResponse)]
+#[expect(
+    dead_code,
+    reason = "only described in the OpenAPI document, never built"
+)]
+#[derive(Debug, ToResponse)]
 #[response(description = "EVE's API refused or failed")]
 pub struct UpstreamFailed(ErrorBody);
 
@@ -116,8 +135,7 @@ pub struct UpstreamFailed(ErrorBody);
 
 /// What a write to a map can be refused with: a bad body, nobody signed in, too low a role,
 /// no such map (or no access to it), or a change the map's state contradicts.
-#[allow(dead_code)]
-#[derive(IntoResponses)]
+#[derive(Debug, IntoResponses)]
 pub enum MapWriteErrors {
     #[response(status = 400)]
     BadRequest(#[ref_response] BadRequest),
@@ -132,8 +150,7 @@ pub enum MapWriteErrors {
 }
 
 /// What a role-gated read of a map can be refused with.
-#[allow(dead_code)]
-#[derive(IntoResponses)]
+#[derive(Debug, IntoResponses)]
 pub enum MapReadErrors {
     #[response(status = 401)]
     Unauthorized(#[ref_response] Unauthorized),
@@ -145,8 +162,7 @@ pub enum MapReadErrors {
 
 /// What a read that a share link also opens can be refused with: there is no role to fall
 /// short of, only access or none.
-#[allow(dead_code)]
-#[derive(IntoResponses)]
+#[derive(Debug, IntoResponses)]
 pub enum SharedReadErrors {
     #[response(status = 401)]
     Unauthorized(#[ref_response] Unauthorized),
@@ -155,8 +171,7 @@ pub enum SharedReadErrors {
 }
 
 /// What an endpoint that only needs someone signed in can be refused with.
-#[allow(dead_code)]
-#[derive(IntoResponses)]
+#[derive(Debug, IntoResponses)]
 pub enum AuthedErrors {
     #[response(status = 401)]
     Unauthorized(#[ref_response] Unauthorized),
@@ -258,6 +273,7 @@ Live updates go over WebSockets, which this document cannot describe: see \
         (name = "systems", description = "The nodes on the map: placing and removing solar systems, moving them, and everything written on a node such as its alias, status, notes, occupier, and the home and rally markers. Also the unresolved hole placeholders and clearing a map."),
         (name = "connections", description = "The wormholes between two placed systems: adding and removing them, setting mass and lifetime status, the jump log that feeds the mass estimate, and pruning connections nobody has used in a while."),
         (name = "signatures", description = "Scan results per system: pasting the probe scanner, editing single signatures, and linking a wormhole signature to the connection it turned out to be. The type catalogue for the pickers lives here too."),
+        (name = "naming", description = "How a map names things: the alias a newly reached system gets and the bookmark names for its holes, both decided by the map's naming strategy so every client names alike."),
         (name = "tracking", description = "Jump tracking on behalf of a pilot: telling the map a character moved from one system to another, so the hole gets mapped and linked the way the automatic tracker would."),
         (name = "history", description = "The map's undo history: the event log, stepping back and forward, and jumping to a point in it. Every write elsewhere lands here as an event."),
         (name = "watchlist", description = "Systems a map keeps an eye on for routing: the list, adding and removing entries, and pinning the ones that matter most."),
@@ -314,6 +330,7 @@ fn areas() -> OpenApiRouter<AppState> {
         .merge(reference::routes())
         .merge(eve_scout::routes())
         .merge(maps::routes())
+        .merge(naming::routes())
         .merge(systems::routes())
         .merge(connections::routes())
         .merge(signatures::routes())
@@ -353,7 +370,7 @@ fn split() -> (Router<AppState>, utoipa::openapi::OpenApi) {
         .flatten()
         {
             if operation.security.is_none() {
-                operation.security = default.clone();
+                operation.security.clone_from(&default);
             }
         }
     }

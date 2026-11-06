@@ -9,7 +9,7 @@ use sqlx::PgPool;
 use super::access::require_role;
 use super::command::{CommandOutput, Effect, MapCommand, Tx, run};
 use super::error::{MapError, Result};
-use super::restore::{capture_systems, remove_captured_signatures};
+use super::removal::Removal;
 use super::store::placements::{self, NewPlacement};
 use super::{Actor, Role};
 use crate::realtime::MapEvent;
@@ -121,28 +121,27 @@ pub(super) async fn apply_remove_system(tx: &mut Tx<'_>, cmd: RemoveSystem) -> R
         return Ok(kept("systems.removed", "kept a protected system"));
     }
 
-    // The unmapped holes hanging off it go with it, and into the same snapshot, so one undo
-    // brings both back.
-    let mut ids = vec![cmd.map_solar_system_id];
-    ids.extend(super::ghost::stranded_ghosts(tx, cmd.map_id, &ids, &[]).await?);
-
-    let snapshot = capture_systems(tx, cmd.map_id, &ids).await?;
-    let deleted = placements::delete_unprotected(tx, cmd.map_id, &ids).await?;
-    if deleted == 0 {
+    // Its edges, the scans at both ends of them and the ghosts left hanging go with it, in
+    // one snapshot, so one undo brings all of it back.
+    let removed = Removal::new(cmd.map_id)
+        .systems(&[cmd.map_solar_system_id])
+        .apply(tx)
+        .await?;
+    if removed.systems.is_empty() {
         return Err(MapError::NotFound);
     }
-    remove_captured_signatures(tx, cmd.map_id, &snapshot).await?;
-    let label = format!("removed {}", snapshot.label());
-    let events: Vec<MapEvent> = ids
-        .iter()
-        .map(|id| MapEvent::SystemRemoved {
-            map_id: cmd.map_id,
-            map_solar_system_id: *id,
-        })
-        .collect();
+    let label = format!("removed {}", systems_label(removed.systems.len()));
+    let events = removed.events();
     Ok(Effect::new("systems.removed", label, CommandOutput::None)
-        .undo_with(MapCommand::RestoreSystems(snapshot))
+        .undo_with(removed.undo())
         .emit_all(events))
+}
+
+fn systems_label(n: usize) -> String {
+    match n {
+        1 => "a system".to_string(),
+        n => format!("{n} systems"),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS, utoipa::ToSchema)]
@@ -177,24 +176,26 @@ pub(super) async fn apply_remove_systems(tx: &mut Tx<'_>, cmd: RemoveSystems) ->
         return Ok(kept("systems.removed", "kept the protected systems"));
     }
 
-    // Same as the single removal: the unmapped holes these leave behind come too.
-    let mut removable = removable;
-    removable.extend(super::ghost::stranded_ghosts(tx, cmd.map_id, &removable, &[]).await?);
-
-    let snapshot = capture_systems(tx, cmd.map_id, &removable).await?;
-    let deleted = placements::delete_unprotected(tx, cmd.map_id, &removable).await?;
-    remove_captured_signatures(tx, cmd.map_id, &snapshot).await?;
+    // Same cascade as the single removal.
+    let removed = Removal::new(cmd.map_id)
+        .systems(&removable)
+        .apply(tx)
+        .await?;
+    let deleted = removed.systems.len();
 
     let label = match held {
-        0 => format!("removed {}", snapshot.label()),
-        n => format!("removed {} (kept {n} protected)", snapshot.label()),
+        0 => format!("removed {}", systems_label(deleted)),
+        n => format!("removed {} (kept {n} protected)", systems_label(deleted)),
     };
-    Ok(
-        Effect::new("systems.removed", label, CommandOutput::Count(deleted))
-            .entries(deleted as i64)
-            .undo_with(MapCommand::RestoreSystems(snapshot))
-            .emit(MapEvent::MapUpdated { map_id: cmd.map_id }),
+    let events = removed.events();
+    Ok(Effect::new(
+        "systems.removed",
+        label,
+        CommandOutput::Count(u64::try_from(deleted).expect("a usize fits in u64")),
     )
+    .entries(deleted)
+    .undo_with(removed.undo())
+    .emit_all(events))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS, utoipa::ToSchema)]
@@ -217,18 +218,28 @@ pub(super) async fn apply_clear_map(tx: &mut Tx<'_>, cmd: ClearMap) -> Result<Ef
     )
     .fetch_all(&mut **tx)
     .await?;
-    let snapshot = capture_systems(tx, cmd.map_id, &doomed).await?;
-    // Exactly the rows the snapshot holds. Matching the condition again would also take a
-    // placement committed since the select, which the undo then could not bring back.
-    let deleted = placements::delete_unprotected(tx, cmd.map_id, &doomed).await?;
+    // Exactly the rows selected. Matching the condition again would also take a placement
+    // committed since the select, which the undo then could not bring back. The kept
+    // systems lose the scans of the holes that led off the map with the rest.
+    let removed = Removal::new(cmd.map_id).systems(&doomed).apply(tx).await?;
+    let deleted = removed.systems.len();
+    let signature_events: Vec<MapEvent> = removed
+        .signature_systems
+        .iter()
+        .map(|&solar_system_id| MapEvent::SignatureChanged {
+            map_id: cmd.map_id,
+            solar_system_id,
+        })
+        .collect();
     Ok(Effect::new(
         "map.cleared",
         format!("cleared the map ({deleted} systems)"),
-        CommandOutput::Count(deleted),
+        CommandOutput::Count(u64::try_from(deleted).expect("a usize fits in u64")),
     )
-    .entries(deleted as i64)
-    .undo_with(MapCommand::RestoreSystems(snapshot))
-    .emit(MapEvent::MapUpdated { map_id: cmd.map_id }))
+    .entries(deleted)
+    .undo_with(removed.undo())
+    .emit(MapEvent::MapUpdated { map_id: cmd.map_id })
+    .emit_all(signature_events))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS, utoipa::ToSchema)]
@@ -299,10 +310,14 @@ pub async fn move_systems(pool: &PgPool, actor: Actor, cmd: MoveSystems) -> Resu
 
 pub(super) async fn apply_move_systems(tx: &mut Tx<'_>, cmd: MoveSystems) -> Result<Effect> {
     let ids: Vec<i64> = cmd.moves.iter().map(|m| m.map_solar_system_id).collect();
-    // Only the ones that will actually move, so undo puts back exactly what shifted.
+    // Only the ones that will actually move, so undo puts back exactly what shifted. Locked
+    // here in id order, not the client's, so two moves over the same rows take them in the
+    // same order. The map lock already serializes them; this keeps it so without one.
     let before: Vec<SystemMove> = sqlx::query!(
         "select id, position_x, position_y from map_solar_systems
-         where map_id = $1 and id = any($2) and not is_pinned",
+         where map_id = $1 and id = any($2) and not is_pinned
+         order by id
+         for update",
         cmd.map_id,
         &ids,
     )
@@ -322,17 +337,14 @@ pub(super) async fn apply_move_systems(tx: &mut Tx<'_>, cmd: MoveSystems) -> Res
 
     let movable: std::collections::HashSet<i64> =
         before.iter().map(|m| m.map_solar_system_id).collect();
-    // In id order, not the client's, so two moves over the same rows lock them in the same
-    // order. The map lock already serializes them; this keeps it so without one.
-    let mut moves: Vec<&SystemMove> = cmd
+    // A system named twice lands where the client put it last, as it did one row at a time.
+    let moves: std::collections::BTreeMap<i64, (f64, f64)> = cmd
         .moves
         .iter()
         .filter(|m| movable.contains(&m.map_solar_system_id))
+        .map(|m| (m.map_solar_system_id, (m.x, m.y)))
         .collect();
-    moves.sort_by_key(|m| m.map_solar_system_id);
-    for m in moves {
-        placements::move_unpinned(tx, cmd.map_id, m.map_solar_system_id, m.x, m.y).await?;
-    }
+    placements::move_many_unpinned(tx, cmd.map_id, &moves).await?;
     let count = movable.len();
     let label = if count == 1 {
         "moved a system".to_string()
@@ -344,7 +356,7 @@ pub(super) async fn apply_move_systems(tx: &mut Tx<'_>, cmd: MoveSystems) -> Res
         moves: before,
     });
     Ok(Effect::new("systems.moved", label, CommandOutput::None)
-        .entries(count as i64)
+        .entries(count)
         .undo_with(inverse)
         .emit(MapEvent::MapUpdated { map_id: cmd.map_id }))
 }
@@ -448,7 +460,7 @@ pub async fn set_occupier(pool: &PgPool, actor: Actor, cmd: SetOccupier) -> Resu
 pub(super) async fn apply_set_occupier(tx: &mut Tx<'_>, cmd: SetOccupier) -> Result<Effect> {
     let before = intel(tx, cmd.map_id, cmd.map_solar_system_id).await?;
     let change = IntelChange {
-        occupier: Some(cmd.occupier.clone()),
+        occupier: TextChange::Set(cmd.occupier.clone()),
         ..IntelChange::default()
     };
     write_intel(tx, cmd.map_id, cmd.map_solar_system_id, &change).await?;
@@ -506,7 +518,7 @@ pub(super) async fn apply_set_notes(tx: &mut Tx<'_>, cmd: SetNotes) -> Result<Ef
         ));
     }
     let change = IntelChange {
-        notes: Some(cmd.notes.clone()),
+        notes: TextChange::Set(cmd.notes.clone()),
         ..IntelChange::default()
     };
     write_intel(tx, cmd.map_id, cmd.map_solar_system_id, &change).await?;
@@ -531,13 +543,33 @@ struct Intel {
     notes: Option<String>,
 }
 
-/// Which intel columns a write sets. `None` leaves a column as it is; the inner `None` of
-/// the text columns clears it.
+/// Which intel columns a write sets. `None` leaves the status as it is.
 #[derive(Default)]
 struct IntelChange {
     status: Option<super::SystemStatus>,
-    occupier: Option<Option<String>>,
-    notes: Option<Option<String>>,
+    occupier: TextChange,
+    notes: TextChange,
+}
+
+/// A text column a write leaves alone or sets, where setting `None` clears it.
+#[derive(Default)]
+enum TextChange {
+    #[default]
+    Keep,
+    Set(Option<String>),
+}
+
+impl TextChange {
+    fn is_set(&self) -> bool {
+        matches!(self, TextChange::Set(_))
+    }
+
+    fn value(&self) -> Option<&str> {
+        match self {
+            TextChange::Set(value) => value.as_deref(),
+            TextChange::Keep => None,
+        }
+    }
 }
 
 /// A placement's intel, or a plain refusal when it is still a ghost. Intel is keyed by
@@ -577,6 +609,10 @@ async fn write_intel(
     map_solar_system_id: i64,
     change: &IntelChange,
 ) -> Result<()> {
+    #[expect(
+        clippy::as_conversions,
+        reason = "sqlx's `as` type override for a typed parameter, not a value conversion"
+    )]
     sqlx::query!(
         "insert into map_solar_system_details
              (map_id, solar_system_id, status, occupying_group, notes)
@@ -591,10 +627,10 @@ async fn write_intel(
         map_id,
         map_solar_system_id,
         change.status as Option<super::SystemStatus>,
-        change.occupier.is_some(),
-        change.occupier.clone().flatten(),
-        change.notes.is_some(),
-        change.notes.clone().flatten(),
+        change.occupier.is_set(),
+        change.occupier.value(),
+        change.notes.is_set(),
+        change.notes.value(),
     )
     .execute(&mut **tx)
     .await?;

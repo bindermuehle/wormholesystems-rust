@@ -43,6 +43,7 @@ function fakeHost(over: Partial<TrackerHost> = {}) {
 	const resolveGhost = vi.fn();
 	let myCharacters: CharacterRef[] = [];
 	const host: TrackerHost = {
+		mapId: () => 1,
 		myCharacters: () => myCharacters,
 		systems: () => [system(1, 100)],
 		connections: () => [],
@@ -54,7 +55,7 @@ function fakeHost(over: Partial<TrackerHost> = {}) {
 			suggest_alias: false,
 			tracked_character_ids: [],
 		}),
-		naming: () => null,
+		suggestAlias: () => Promise.resolve(null),
 		ignored: () => new Set(),
 		stargates: () => new Map(),
 		whenRoutingLoaded: () => Promise.resolve(),
@@ -97,11 +98,15 @@ async function fly(
 		{ character_id: 9, is_active: true, online: true, solar_system_id: to } as CharacterRef,
 	]);
 	tracker.observe();
-	// The decision path awaits routing tables and the catalog.
-	await Promise.resolve();
-	await Promise.resolve();
-	await Promise.resolve();
-	await Promise.resolve();
+	await settle();
+}
+
+/**
+ * Let the decision path finish: it awaits routing tables, the catalog and the alias
+ * suggestion, all already resolved here, so one macrotask drains them however many there are.
+ */
+function settle() {
+	return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe('JumpTracker', () => {
@@ -161,7 +166,7 @@ describe('JumpTracker', () => {
 		tracker.observe();
 		at(200, 300, 400);
 		tracker.observe();
-		for (let i = 0; i < 4; i++) await Promise.resolve();
+		await settle();
 		expect(trackJump).toHaveBeenCalledTimes(2);
 		expect(trackJump.mock.calls.map((c) => c[0].to_solar_system_id).sort()).toEqual([200, 300]);
 	});
@@ -195,13 +200,20 @@ describe('JumpTracker', () => {
 		tracker.observe();
 		at(200, 300);
 		tracker.observe();
-		for (let i = 0; i < 6; i++) await Promise.resolve();
+		await settle();
 		expect(tracker.prompt).toMatchObject({ pilot: 'Main', targetSolarSystemId: 200 });
 		tracker.dismiss();
-		for (let i = 0; i < 6; i++) await Promise.resolve();
+		await settle();
 		expect(tracker.prompt).toMatchObject({ pilot: 'Alt', targetSolarSystemId: 300 });
 		tracker.dismiss();
 		expect(tracker.prompt).toBeNull();
+	});
+
+	it('knows the region of a system not on the map yet, for the bookmark', async () => {
+		const { host, setPilots } = fakeHost({ sigs: () => [scanned] });
+		const tracker = new JumpTracker(host);
+		await fly(tracker, setPilots, 100, 200);
+		expect(tracker.prompt).toMatchObject({ existing: null, targetRegion: 'D-R00018' });
 	});
 
 	it('maps a jump left without a signature, unlinked', async () => {
@@ -286,6 +298,70 @@ describe('JumpTracker', () => {
 			solar_system_id: 200,
 		});
 		expect(trackJump).not.toHaveBeenCalled();
+	});
+
+	it('names the lone ghost it resolves', async () => {
+		const { host, resolveGhost, setPilots } = fakeHost({
+			systems: () => [system(1, 100), ghost(2)],
+			connections: () => [conn(10, 1, 2)],
+			settings: () => ({
+				tracking_allowed: true,
+				prompt_for_signature: true,
+				suggest_alias: true,
+				tracked_character_ids: [],
+			}),
+			suggestAlias: () => Promise.resolve('1'),
+		});
+		const tracker = new JumpTracker(host);
+		await fly(tracker, setPilots, 100, 200);
+		expect(resolveGhost.mock.calls[0][0]).toMatchObject({ map_solar_system_id: 2, alias: '1' });
+	});
+
+	it('keeps the name a lone ghost was given before it was flown', async () => {
+		const suggestAlias = vi.fn(() => Promise.resolve('1'));
+		const { host, resolveGhost, setPilots } = fakeHost({
+			systems: () => [system(1, 100), { ...ghost(2), alias: 'B' } as MapSystemView],
+			connections: () => [conn(10, 1, 2)],
+			settings: () => ({
+				tracking_allowed: true,
+				prompt_for_signature: true,
+				suggest_alias: true,
+				tracked_character_ids: [],
+			}),
+			suggestAlias,
+		});
+		const tracker = new JumpTracker(host);
+		await fly(tracker, setPilots, 100, 200);
+		expect(suggestAlias).not.toHaveBeenCalled();
+		expect(resolveGhost.mock.calls[0][0].alias).toBeUndefined();
+	});
+
+	it('leaves a pilot the desktop app is watching to it', async () => {
+		const { host, trackJump, resolveGhost, setPilots } = fakeHost();
+		const tracker = new JumpTracker(host);
+		const pilot = (system: number, desktop: number | null) =>
+			({
+				character_id: 9,
+				is_active: true,
+				online: true,
+				solar_system_id: system,
+				desktop_map_id: desktop,
+			}) as CharacterRef;
+		setPilots([pilot(100, null)]);
+		tracker.observe();
+		setPilots([pilot(200, 1)]);
+		tracker.observe();
+		await settle();
+		expect(trackJump).not.toHaveBeenCalled();
+		expect(resolveGhost).not.toHaveBeenCalled();
+
+		// On another map, it is this one's to map.
+		setPilots([pilot(100, 2)]);
+		tracker.observe();
+		setPilots([pilot(300, 2)]);
+		tracker.observe();
+		await settle();
+		expect(trackJump).toHaveBeenCalledOnce();
 	});
 
 	it('records nothing for an already-mapped, already-explained connection', async () => {

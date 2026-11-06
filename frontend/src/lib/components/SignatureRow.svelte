@@ -5,11 +5,8 @@
 	import TrashIcon from '@lucide/svelte/icons/trash-2';
 
 	import { toast } from 'svelte-sonner';
-	import { copyText } from '$lib/clipboard';
+	import { copyPending } from '$lib/clipboard';
 
-	import { aliasTargetKind, suggestAlias } from '$lib/naming/alias';
-	import { formatsFromNaming, signatureBookmark } from '$lib/naming/bookmark';
-	import { classMeta, isWormholeClass } from '$lib/map/classes';
 	import type { MappedSystem } from '$lib/map/system';
 	import type { MassStatus } from '$lib/api/types/MassStatus';
 	import type { Signature } from '$lib/api/types/Signature';
@@ -21,7 +18,7 @@
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import * as Select from '$lib/components/ui/select';
 	import { LIFETIME_OPTIONS, SIGNATURE_MASS_OPTIONS } from '$lib/map/connection-status';
-	import { CATEGORIES, categoryMeta, typeById } from '$lib/map/signatures';
+	import { CATEGORIES, categoryMeta } from '$lib/map/signatures';
 	import type { SignatureContext, SignaturePatch } from '$lib/map/signature-context';
 	import { echoContextFor, type ScannedHole } from '$lib/naming/echo-context';
 	import { isGeneratedAlias } from '$lib/naming/echo';
@@ -206,60 +203,30 @@
 	}
 
 	// The bookmark names the far end of the hole ("where this leads"), not where you are
-	// standing. Until the hole is mapped, the signature type's promised class is all we know.
+	// standing; the map's naming strategy decides what it says. A scanner bookmarks every
+	// hole before opening any, so a hole with no name yet takes the next one in the chain,
+	// and the server writes it onto the ghost in the same step so the next row sees it
+	// taken. A hole with no placement at all gets the name on the clipboard only.
 	function copyBookmark() {
-		const type = typeById(catalog, sig.signature_type_id);
-		const far = linkedSystem;
-		const farClass = far?.wormhole_class_id ?? type?.target_class ?? null;
-		const text = signatureBookmark(
-			sig,
-			type,
-			far,
-			linkedTarget?.alias ?? guessAlias(farClass, far?.security_status ?? null),
-			system.alias,
-			formatsFromNaming(ctx.naming),
-		);
-		void copyText(text, { silent: true });
-		toast.success('Bookmark copied', { description: text });
-	}
-
-	// A scanner bookmarks every hole before opening any, so each copy has to take the next
-	// name in the chain rather than all of them claiming the first. Written onto the ghost
-	// when there is one, so the next row sees it taken; a hole with no placement at all
-	// gets the name on the clipboard only.
-	/** A signature as the echo scheme reads it: its wormhole code and when it was scanned. */
-	function asHole(signature: Signature): ScannedHole {
-		return {
-			id: signature.id,
-			code: typeById(catalog, signature.signature_type_id)?.signature ?? null,
-			created_at: signature.created_at,
-		};
-	}
-
-	function guessAlias(farClass: number | null, farSecurity: number | null): string | null {
-		const targetIsWormhole = isWormholeClass(farClass);
-		const alias = suggestAlias({
-			parentAlias: system.alias,
-			targetIsWormhole,
-			originIsWormhole: isWormholeClass(system.wormhole_class_id),
-			aliases: ctx.systems.map((s) => s.alias).filter((alias): alias is string => Boolean(alias)),
-			scheme: ctx.naming?.alias_scheme,
-			targetKind: aliasTargetKind(targetIsWormhole, classMeta(farClass, farSecurity).short),
-			ignoredAlias: ctx.naming?.ignored_alias,
-			// Only the echo scheme reads this; the other two ignore it.
-			echo: echoContextFor({
-				systems: ctx.systems,
-				connections: ctx.connections,
-				originSystemId: system.id,
-				targetClassId: farClass,
-				hole: asHole(sig),
-				holesInOrigin: ctx.sigs
-					.filter((other) => other.solar_system_id === sig.solar_system_id)
-					.map(asHole),
-			}),
+		const nameBookmark = ctx.nameBookmark;
+		if (!nameBookmark) return;
+		const named = nameBookmark({
+			near: system.id,
+			destination: linkedTarget?.id,
+			suggest_alias: true,
+			claim_alias: canWrite,
+			signature_id: sig.signature_id,
+			signature_type_id: sig.signature_type_id ?? undefined,
+			size: sig.size ?? undefined,
+			mass_status: sig.mass_status ?? undefined,
+			time_status: sig.time_status ?? undefined,
 		});
-		if (alias && linkedTarget && canWrite) ctx.actions?.setAlias(linkedTarget, alias);
-		return alias;
+		void copyPending(
+			named.then((n) => n.text),
+			{ failed: 'Could not name the bookmark' },
+		).then((text) => {
+			if (text !== null) toast.success('Bookmark copied', { description: text });
+		});
 	}
 
 	function remove() {
@@ -319,7 +286,7 @@
 		{/if}
 	</div>
 
-	<div class="w-20 shrink-0">
+	<div class="w-26 shrink-0">
 		<Select.Root
 			type="single"
 			value={sig.group === 'unknown' ? '' : sig.group}
@@ -425,7 +392,7 @@
 	</div>
 
 	<div class="flex w-12 shrink-0 items-center justify-end gap-1">
-		{#if isWormhole}
+		{#if isWormhole && ctx.nameBookmark}
 			<Button
 				variant="ghost"
 				size="icon"

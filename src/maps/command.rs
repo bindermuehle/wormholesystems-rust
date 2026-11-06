@@ -171,7 +171,7 @@ map_commands! {
     UnlinkSignature(Signature) => signatures::apply_unlink_signature,
     AddConnectionJump(jumps::ConnectionJump) => jumps::apply_add_jump,
     UpdateConnectionJump(jumps::ConnectionJump) => jumps::apply_update_jump,
-    RemoveConnectionJump(u64) => jumps::apply_remove_jump,
+    RemoveConnectionJump(Option<i64>) => jumps::apply_remove_jump,
     RestoreConnectionJump => jumps::apply_restore_jump,
     AddWatchlistEntry(watchlist::WatchlistEntry) => watchlist::apply_add_entry,
     SetWatchlistPinned(watchlist::WatchlistEntry) => watchlist::apply_set_pinned,
@@ -211,6 +211,8 @@ pub(super) async fn run_as<C: Command>(
 pub enum CommandOutput {
     None,
     Count(u64),
+    /// The connection a removed thing belonged to, if any.
+    ConnectionId(Option<i64>),
     System(Box<MapSolarSystem>),
     Connection(Box<MapConnection>),
     Signature(Box<Signature>),
@@ -235,7 +237,7 @@ pub trait FromOutput: Sized {
     fn from_output(output: CommandOutput) -> Result<Self>;
 }
 
-fn wrong_output(output: CommandOutput) -> MapError {
+fn wrong_output(output: &CommandOutput) -> MapError {
     MapError::Validation(format!("unexpected command output: {output:?}"))
 }
 
@@ -246,7 +248,7 @@ macro_rules! from_output {
             fn from_output(output: CommandOutput) -> Result<Self> {
                 match output {
                     CommandOutput::$variant(x) => Ok(*x),
-                    other => Err(wrong_output(other)),
+                    other => Err(wrong_output(&other)),
                 }
             }
         }
@@ -268,7 +270,16 @@ impl FromOutput for u64 {
     fn from_output(output: CommandOutput) -> Result<Self> {
         match output {
             CommandOutput::Count(n) => Ok(n),
-            other => Err(wrong_output(other)),
+            other => Err(wrong_output(&other)),
+        }
+    }
+}
+
+impl FromOutput for Option<i64> {
+    fn from_output(output: CommandOutput) -> Result<Self> {
+        match output {
+            CommandOutput::ConnectionId(id) => Ok(id),
+            other => Err(wrong_output(&other)),
         }
     }
 }
@@ -286,7 +297,7 @@ pub(super) struct Effect {
     pub kind: &'static str,
     /// Human sentence without the actor, e.g. `added Jita`.
     pub label: String,
-    pub entries: i64,
+    pub entries: i32,
     /// `None` marks the change as not undoable.
     pub inverse: Option<MapCommand>,
     pub output: CommandOutput,
@@ -308,8 +319,10 @@ impl Effect {
         }
     }
 
-    pub(super) fn entries(mut self, entries: i64) -> Self {
-        self.entries = entries;
+    /// How many rows the change touched, for the history. A count past what the column
+    /// holds is recorded as its maximum.
+    pub(super) fn entries(mut self, entries: impl TryInto<i32>) -> Self {
+        self.entries = entries.try_into().unwrap_or(i32::MAX);
         self
     }
 
@@ -365,13 +378,13 @@ impl MapCommand {
 async fn apply_sequence(tx: &mut Tx<'_>, cmd: Sequence, actor: EventActor) -> Result<Effect> {
     let map_id = cmd.map_id;
     let mut inverses = Vec::new();
-    let mut entries = 0;
+    let mut entries: i32 = 0;
     let mut events = Vec::new();
     for step in cmd.steps {
         // Boxed because this is `apply` calling itself: the future would otherwise be
         // infinitely sized.
         let effect = Box::pin(step.apply(tx, actor)).await?;
-        entries += effect.entries;
+        entries = effect.entries.saturating_add(entries);
         events.extend(effect.events);
         if let Some(inverse) = effect.inverse {
             inverses.push(inverse);

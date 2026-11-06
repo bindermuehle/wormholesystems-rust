@@ -84,6 +84,11 @@ async fn ship_mass_tx(tx: &mut Tx<'_>, ship_type_id: i64) -> Result<i64> {
     ship_mass(&mut **tx, ship_type_id).await
 }
 
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "a hull mass in kg is a whole number far inside i64"
+)]
 async fn ship_mass<'e, E>(executor: E, ship_type_id: i64) -> Result<i64>
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
@@ -286,8 +291,7 @@ pub async fn remove_jump(
     actor: Actor,
     cmd: RemoveConnectionJump,
 ) -> Result<Option<i64>> {
-    let removed = run(pool, actor, cmd).await?;
-    Ok((removed != 0).then_some(removed as i64))
+    run(pool, actor, cmd).await
 }
 
 pub(super) async fn apply_remove_jump(
@@ -309,7 +313,7 @@ pub(super) async fn apply_remove_jump(
     let mut effect = Effect::new(
         "jumps.removed",
         "removed a jump",
-        CommandOutput::Count(connection_id.unwrap_or(0) as u64),
+        CommandOutput::ConnectionId(connection_id),
     )
     .undo_with(MapCommand::RestoreConnectionJump(RestoreConnectionJump {
         map_id: cmd.map_id,
@@ -336,7 +340,7 @@ pub(super) async fn apply_restore_jump(
     tx: &mut Tx<'_>,
     cmd: RestoreConnectionJump,
 ) -> Result<Effect> {
-    store::jumps::reinsert(tx, cmd.map_id, &cmd.jump).await?;
+    store::jumps::reinsert(tx, cmd.map_id, std::slice::from_ref(&cmd.jump)).await?;
     let mut effect = Effect::new("jumps.logged", "put a jump back", CommandOutput::None).undo_with(
         MapCommand::RemoveConnectionJump(RemoveConnectionJump {
             map_id: cmd.map_id,
@@ -456,7 +460,11 @@ pub async fn record_transit(
         return Ok(());
     };
     let mass = match character.ship_type_id {
-        Some(t) => ship_mass(pool, t).await.unwrap_or(0),
+        // Losing the mass understates the hole's, but losing the jump is worse.
+        Some(t) => ship_mass(pool, t).await.unwrap_or_else(|err| {
+            tracing::warn!("jump capture: no mass for ship type {t}: {err}");
+            0
+        }),
         None => 0,
     };
 

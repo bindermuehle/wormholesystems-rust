@@ -11,7 +11,7 @@ use axum::routing::{get, post};
 use sqlx::PgPool;
 
 use crate::config::{Config, ConfigError};
-use crate::esi::{EsiClient, Sso};
+use crate::esi::{EsiClient, Sso, TokenCache};
 
 /// What every handler can reach. Cheap to clone: everything in it is a handle.
 ///
@@ -19,9 +19,12 @@ use crate::esi::{EsiClient, Sso};
 /// ([`crate::maps::hub`], [`crate::maps::grid`]) because a command, which has only its
 /// transaction, publishes and places through them; a second copy here would be one that
 /// could disagree.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AppState {
     pub sso: Arc<Sso>,
+    /// Every character's access token, shared by everything that acts as one, so no two of
+    /// them refresh the same token at once.
+    pub tokens: Arc<TokenCache>,
     pub esi: EsiClient,
     pub db: PgPool,
     pub user_hub: crate::realtime::UserHub,
@@ -47,6 +50,24 @@ pub struct AppState {
     pub eve_scout: Arc<crate::integrations::eve_scout::EveScout>,
     /// Where the browser's error reports go, when the operator set a DSN for them.
     pub sentry_tunnel: Option<Arc<crate::telemetry::tunnel::Tunnel>>,
+}
+
+/// Whether cookies are marked `Secure`, so a browser only sends them over HTTPS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CookieSecurity {
+    Https,
+    /// Local development over plain http, which would never get a `Secure` cookie back.
+    PlainHttp,
+}
+
+impl AppState {
+    pub fn cookie_security(&self) -> CookieSecurity {
+        if self.secure_cookies {
+            CookieSecurity::Https
+        } else {
+            CookieSecurity::PlainHttp
+        }
+    }
 }
 
 /// Everything the server answers: sign-in, Discord, the realtime sockets, the JSON API and
@@ -128,10 +149,12 @@ pub async fn serve(config: Config) {
         crate::telemetry::metrics::serve(addr, db.clone()).await;
     }
     let user_hub = crate::realtime::UserHub::new();
-    let server = start_background(&config, &db, &sso, &esi, &user_hub).await;
+    let tokens = Arc::new(TokenCache::new());
+    let server = start_background(&config, &db, &sso, &tokens, &esi, &user_hub).await;
 
     let state = AppState {
         sso,
+        tokens,
         esi,
         db,
         user_hub,
@@ -184,6 +207,7 @@ async fn start_background(
     config: &Config,
     db: &PgPool,
     sso: &Arc<Sso>,
+    tokens: &Arc<TokenCache>,
     esi: &EsiClient,
     user_hub: &crate::realtime::UserHub,
 ) -> crate::server_status::ServerWatch {
@@ -200,7 +224,8 @@ async fn start_background(
     // a change.
     crate::pilots::poller::start(
         db.clone(),
-        sso.clone(),
+        Arc::clone(sso),
+        Arc::clone(tokens),
         esi.clone(),
         user_hub.clone(),
         server.clone(),
@@ -212,6 +237,15 @@ async fn start_background(
 
     // Keep sovereignty (and its alliance/corp entities) current for map display.
     crate::sovereignty::start(db.clone(), esi.clone(), server.clone());
+
+    // Name every public structure, so docked pilots read as more than "a structure".
+    crate::structures::start(
+        db.clone(),
+        Arc::clone(sso),
+        Arc::clone(tokens),
+        esi.clone(),
+        server.clone(),
+    );
 
     // Mirror the raidable skyhooks CCP is currently advertising.
     crate::skyhooks::start(
@@ -277,8 +311,8 @@ async fn shutdown_signal() {
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
     tokio::select! {
-        _ = ctrl_c => {}
-        _ = terminate => {}
+        () = ctrl_c => {}
+        () = terminate => {}
     }
     tracing::info!("shutting down");
     // WebSockets outlive the request that opened them, so the server would wait on them

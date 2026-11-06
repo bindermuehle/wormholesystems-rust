@@ -4,12 +4,17 @@
 //! [authentication.md](../docs/database/authentication.md). The cookie carries only the
 //! opaque session id; the active character is per-session. Expiry is enforced in SQL
 //! (`now()`), so this never needs chrono's clock.
+//!
+//! Only the SHA-256 of a session id is stored (`sessions.id_hash`), as for personal access
+//! tokens. Everything here takes and returns the raw id the cookie carries and hashes it on
+//! the way to the database.
 
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::esi::jwt::Claims;
 use crate::maps::Actor;
+use crate::tokens;
 
 /// Name of the cookie holding the opaque session id.
 pub const SESSION_COOKIE: &str = "ws_session";
@@ -20,8 +25,14 @@ pub const SESSION_COOKIE: &str = "ws_session";
 /// same terms (`frontend/src/lib/server/session.ts`).
 pub const SESSION_DAYS: i64 = 400;
 
+/// [`SESSION_DAYS`] as the `int` the queries bind.
+fn session_days() -> i32 {
+    i32::try_from(SESSION_DAYS).expect("SESSION_DAYS fits in an int")
+}
+
 /// An ESI entity (corp/alliance) we cache so a character's deferred FKs resolve. Carries
 /// just what the entity tables require; refreshed on each login.
+#[derive(Debug)]
 pub struct Entity {
     pub id: i64,
     pub name: String,
@@ -37,17 +48,17 @@ pub async fn actor_for_session(
 ) -> Result<Option<Actor>, sqlx::Error> {
     let row = sqlx::query!(
         "with live as (
-             select id, user_id, active_character_id, expires_at
-             from sessions where id = $1 and expires_at > now()
+             select id_hash, user_id, active_character_id, expires_at
+             from sessions where id_hash = $1 and expires_at > now()
          ), renewed as (
              update sessions set expires_at = now() + make_interval(days => $2::int)
-             where id = (select id from live
+             where id_hash = (select id_hash from live
                          where expires_at < now() + make_interval(days => $2::int - 1))
          )
          select user_id as \"user_id!\", active_character_id as \"active_character_id!\"
          from live",
-        session_id,
-        SESSION_DAYS as i32,
+        tokens::hash(session_id),
+        session_days(),
     )
     .fetch_optional(pool)
     .await?;
@@ -55,6 +66,27 @@ pub async fn actor_for_session(
         user_id: r.user_id,
         character_id: r.active_character_id,
     }))
+}
+
+/// The session a finished login lands in. Adding an alt or topping up permissions is a
+/// login as well, but the browser is already signed in to this account: it keeps that
+/// session and the character it was flying, rather than gaining a second session that
+/// outlives the first and starting over on the preferred character. Any other session the
+/// browser held, for another account or already dead, is ended.
+pub async fn resume_or_create(
+    pool: &PgPool,
+    current: Option<&str>,
+    user_id: i64,
+    character_id: i64,
+) -> Result<String, sqlx::Error> {
+    if let Some(current) = current {
+        let actor = actor_for_session(pool, current).await?;
+        if actor.is_some_and(|actor| actor.user_id == user_id) {
+            return Ok(current.to_string());
+        }
+        delete_session(pool, current).await?;
+    }
+    create_session(pool, user_id, character_id).await
 }
 
 /// Open a session for a user, [`SESSION_DAYS`] long. Returns the opaque id to put in the
@@ -69,14 +101,14 @@ pub async fn create_session(
 ) -> Result<String, sqlx::Error> {
     let id = Uuid::new_v4().to_string();
     sqlx::query!(
-        "insert into sessions (id, user_id, active_character_id, expires_at)
+        "insert into sessions (id_hash, user_id, active_character_id, expires_at)
          values ($1, $2,
                  coalesce((select id from characters where user_id = $2 and is_preferred), $3),
                  now() + make_interval(days => $4::int))",
-        id,
+        tokens::hash(&id),
         user_id,
         character_id,
-        SESSION_DAYS as i32,
+        session_days(),
     )
     .execute(pool)
     .await?;
@@ -98,9 +130,12 @@ pub async fn touch_activity(pool: &PgPool, user_id: i64) -> Result<(), sqlx::Err
 
 /// End a session (logout).
 pub async fn delete_session(pool: &PgPool, session_id: &str) -> Result<(), sqlx::Error> {
-    sqlx::query!("delete from sessions where id = $1", session_id)
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "delete from sessions where id_hash = $1",
+        tokens::hash(session_id)
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -113,9 +148,9 @@ pub async fn set_active_character(
 ) -> Result<bool, sqlx::Error> {
     let updated = sqlx::query!(
         "update sessions s set active_character_id = $2
-         where s.id = $1
+         where s.id_hash = $1
            and exists (select 1 from characters c where c.id = $2 and c.user_id = s.user_id)",
-        session_id,
+        tokens::hash(session_id),
         character_id,
     )
     .execute(pool)
@@ -170,6 +205,36 @@ pub async fn ensure_preferred_character(pool: &PgPool, user_id: i64) -> Result<(
     Ok(())
 }
 
+/// The character's corp/alliance are deferred FKs to the ESI-cached entity tables, so
+/// ensure those rows exist (and are kept fresh) before/with the character row.
+async fn upsert_entities(
+    conn: &mut sqlx::PgConnection,
+    corporation: &Entity,
+    alliance: Option<&Entity>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "insert into corporations (id, name, ticker) values ($1, $2, $3)
+         on conflict (id) do update set name = excluded.name, ticker = excluded.ticker, updated_at = now()",
+        corporation.id,
+        corporation.name,
+        corporation.ticker,
+    )
+    .execute(&mut *conn)
+    .await?;
+    if let Some(alliance) = alliance {
+        sqlx::query!(
+            "insert into alliances (id, name, ticker) values ($1, $2, $3)
+             on conflict (id) do update set name = excluded.name, ticker = excluded.ticker, updated_at = now()",
+            alliance.id,
+            alliance.name,
+            alliance.ticker,
+        )
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
 /// Resolve the SSO login to a user and persist the character, returning the owning `user_id`.
 ///
 /// The identity rules: a returning login reuses the user, an owner-hash change (character
@@ -186,28 +251,7 @@ pub async fn persist_identity(
     let alliance_id = alliance.as_ref().map(|a| a.id);
     let mut tx = pool.begin().await?;
 
-    // The character's corp/alliance are deferred FKs to the ESI-cached entity tables, so
-    // ensure those rows exist (and are kept fresh) before/with the character row.
-    sqlx::query!(
-        "insert into corporations (id, name, ticker) values ($1, $2, $3)
-         on conflict (id) do update set name = excluded.name, ticker = excluded.ticker, updated_at = now()",
-        corporation.id,
-        corporation.name,
-        corporation.ticker,
-    )
-    .execute(&mut *tx)
-    .await?;
-    if let Some(alliance) = &alliance {
-        sqlx::query!(
-            "insert into alliances (id, name, ticker) values ($1, $2, $3)
-             on conflict (id) do update set name = excluded.name, ticker = excluded.ticker, updated_at = now()",
-            alliance.id,
-            alliance.name,
-            alliance.ticker,
-        )
-        .execute(&mut *tx)
-        .await?;
-    }
+    upsert_entities(&mut tx, &corporation, alliance.as_ref()).await?;
 
     let existing = sqlx::query!(
         "select user_id, owner_hash from characters where id = $1",

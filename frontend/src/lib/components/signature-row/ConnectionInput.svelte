@@ -8,6 +8,7 @@
 	import type { SignatureCatalog } from '$lib/api/types/SignatureCatalog';
 	import * as Select from '$lib/components/ui/select';
 	import ClassBadge from '$lib/components/ClassBadge.svelte';
+	import { destIncludes } from '$lib/map/classes';
 	import { typeById } from '$lib/map/signatures';
 	import type { SignatureContext } from '$lib/map/signature-context';
 
@@ -42,7 +43,7 @@
 			.filter(
 				(e) =>
 					targetClass === null ||
-					(e.target?.kind === 'system' && e.target.wormhole_class_id === targetClass),
+					(e.target?.kind === 'system' && destIncludes(targetClass, e.target.wormhole_class_id)),
 			)
 			.sort((a, b) => {
 				const aa = a.target?.alias ?? null;
@@ -98,13 +99,16 @@
 				security={mapped?.security_status ?? null}
 				class="w-5 shrink-0 text-center"
 			/>
-			{#if t.alias}
-				<span class="shrink-0 font-medium">{t.alias}</span>
-			{/if}
-			<span class="truncate {t.alias ? 'text-muted-foreground' : ''}">
-				{mapped?.name ?? 'Unmapped'}
+			<!-- One run of text, cut from the end: the region gives way before the name. -->
+			<span class="truncate">
+				{#if t.alias}
+					<span class="font-medium">{t.alias}</span>
+				{/if}
+				<span class={t.alias ? 'text-muted-foreground' : ''}>{mapped?.name ?? 'Unmapped'}</span>
+				{#if mapped?.region}
+					<span class="text-muted-foreground/60">{mapped.region}</span>
+				{/if}
 			</span>
-			<span class="shrink-0 text-muted-foreground/60">{mapped?.region ?? ''}</span>
 		</span>
 	{/if}
 {/snippet}

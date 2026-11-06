@@ -4,7 +4,9 @@
 //! Tier 1 polls online state for the characters of active users every 60s; tier 2 polls
 //! location and ship for the online ones every 5s. Both are bounded by a [`Semaphore`] so we
 //! stay within ESI's error limit and fit each tier's time budget. A poll that observes an
-//! actual change pings its user's private channel so their UI refetches.
+//! actual change pings its user's private channel so their UI refetches, and the maps that
+//! user shares their position with hear about it once the tick is over: once per map, however
+//! many of the pilots on it changed.
 //!
 //! Each tier awaits its whole batch before the next tick, so one poll that never returns
 //! would stop that tier for the life of the process. Every poll runs under
@@ -29,8 +31,10 @@ use crate::background::{Streak, spawn_every};
 use crate::db::PgTokenStore;
 use crate::esi::scopes::Scope;
 use crate::esi::{EsiClient, EsiError, Result as EsiResult, Sso, Token, TokenCache, TokenStore};
-use crate::realtime::{UserEvent, UserHub};
+use crate::pilots::structures::{self, wait};
+use crate::realtime::{MapEvent, MapHub, UserEvent, UserHub};
 use crate::server_status::ServerWatch;
+use crate::structures::{is_named, store as store_structure};
 
 /// Max ESI requests in flight per tick, the one tuning knob. Raise to fit more characters
 /// in the 5s tier-2 budget; lower to stay further under ESI's error limit.
@@ -41,7 +45,7 @@ const CONCURRENCY: usize = 32;
 const POLL_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// How long a tier may fail on every tick before it is an error rather than a warning.
-const FAILING_FOR: Duration = Duration::from_secs(15 * 60);
+const FAILING_FOR: Duration = Duration::from_mins(15);
 
 /// A poll's outcome. A missing scope is not a failure: that field is simply not tracked.
 type Poll = Result<(), String>;
@@ -60,7 +64,9 @@ struct Poller {
     esi: EsiClient,
     users: UserHub,
     store: PgTokenStore,
-    tokens: TokenCache,
+    tokens: Arc<TokenCache>,
+    /// Which docked pilots' structures to leave alone for now.
+    structures: structures::Backoff,
     /// The poller's share of the pool. [`CONCURRENCY`] polls can be in flight and each
     /// ends in a write, while the API, websockets and killmail ingest draw on the same
     /// connections; without a cap of its own a busy tick could take all of them.
@@ -71,7 +77,8 @@ struct Poller {
 
 impl Poller {
     /// Wait for one of the poller's connections. Held across one statement or one short
-    /// run of them, never while waiting on ESI, and never two at once.
+    /// run of them, never while waiting on ESI, and never while waiting for another. A
+    /// tier-2 poll's location and ship halves run side by side and may hold one each.
     async fn db(&self) -> SemaphorePermit<'_> {
         self.db.acquire().await.expect("semaphore open")
     }
@@ -113,26 +120,36 @@ impl TokenStore for Throttled<'_> {
 }
 
 /// Spawn the polling loops. Returns immediately; the loops run for the process lifetime.
-pub fn start(pool: PgPool, sso: Arc<Sso>, esi: EsiClient, users: UserHub, server: ServerWatch) {
+pub fn start(
+    pool: PgPool,
+    sso: Arc<Sso>,
+    tokens: Arc<TokenCache>,
+    esi: EsiClient,
+    users: UserHub,
+    server: ServerWatch,
+) {
     // Half the pool, leaving the rest to requests and the other background work.
-    let db = (pool.options().get_max_connections() as usize / 2).max(1);
+    let db = (usize::try_from(pool.options().get_max_connections()).expect("u32 fits in usize")
+        / 2)
+    .max(1);
     let poller = Arc::new(Poller {
         store: PgTokenStore::new(pool.clone()),
         pool,
         sso,
         esi,
         users,
-        tokens: TokenCache::new(),
+        tokens,
+        structures: structures::Backoff::default(),
         db: Semaphore::new(db),
         tier_one_failing: Streak::new(FAILING_FOR),
         tier_two_failing: Streak::new(FAILING_FOR),
     });
-    let (one, one_server) = (poller.clone(), server.clone());
+    let (one, one_server) = (Arc::clone(&poller), server.clone());
     spawn_every("tracking tier-1", Duration::from_secs(60), move || {
-        tier_one(one.clone(), one_server.clone())
+        tier_one(Arc::clone(&one), one_server.clone())
     });
     spawn_every("tracking tier-2", Duration::from_secs(5), move || {
-        tier_two(poller.clone(), server.clone())
+        tier_two(Arc::clone(&poller), server.clone())
     });
 }
 
@@ -143,33 +160,32 @@ async fn tier_one(poller: Arc<Poller>, server: ServerWatch) -> Result<(), sqlx::
         let _db = poller.db().await;
         mark_unpolled_offline(&poller.pool).await?
     };
-    let mut users = HashSet::new();
+    let changed = Changed::default();
     for d in &gone {
-        poller.users.publish(
-            d.user_id,
-            UserEvent::CharacterStatusChanged {
-                character_id: d.character_id,
-            },
-        );
-        users.insert(d.user_id);
-    }
-    for user_id in users {
-        announce_presence(&poller, user_id).await;
+        changed.add(&poller, *d);
     }
 
     // Nobody can be online while the server is not, and every call would fail against the
     // error limit. See [`crate::server_status`].
-    if !server.should_poll() {
+    let outcome = if server.should_poll() {
+        poll_online_all(&poller, &changed).await
+    } else {
         skipped_offline("tier-1");
-        return Ok(());
-    }
-    let due = active_characters(&poller.pool, false).await?;
+        Ok(())
+    };
+    // Whoever went offline above is announced even when the polls could not run.
+    changed.announce(&poller).await;
+    outcome
+}
+
+async fn poll_online_all(poller: &Arc<Poller>, changed: &Changed) -> Result<(), sqlx::Error> {
+    let due = active_characters(&poller.pool).await?;
     // Everyone tier 2 polls is in this set too, so this is where tokens for characters that
     // dropped out of polling are let go.
     let ids: HashSet<i64> = due.iter().map(|d| d.character_id).collect();
     poller.tokens.retain(|id| ids.contains(&id));
     run_polls("tier-1", &poller.tier_one_failing, &due, |d| {
-        poll_online(poller.clone(), d)
+        poll_online(Arc::clone(poller), d, changed.clone())
     })
     .await;
     Ok(())
@@ -181,12 +197,48 @@ async fn tier_two(poller: Arc<Poller>, server: ServerWatch) -> Result<(), sqlx::
         skipped_offline("tier-2");
         return Ok(());
     }
-    let due = active_characters(&poller.pool, true).await?;
+    let due = online_characters(&poller.pool).await?;
+    let changed = Changed::default();
     run_polls("tier-2", &poller.tier_two_failing, &due, |d| {
-        poll_location_ship(poller.clone(), d)
+        poll_location_ship(Arc::clone(&poller), d, changed.clone())
     })
     .await;
+    changed.announce(&poller).await;
     Ok(())
+}
+
+/// The users whose pilots changed during one tick. Each is pinged on their own channel as
+/// soon as it happens; their maps hear once the tick is over, so ten pilots jumping
+/// together on one map send it one event rather than ten.
+#[derive(Clone, Default)]
+struct Changed(Arc<Mutex<HashSet<i64>>>);
+
+impl Changed {
+    fn add(&self, poller: &Poller, due: Due) {
+        poller.users.publish(
+            due.user_id,
+            UserEvent::CharacterStatusChanged {
+                character_id: due.character_id,
+            },
+        );
+        self.0
+            .lock()
+            .expect("changed users lock")
+            .insert(due.user_id);
+    }
+
+    async fn announce(&self, poller: &Poller) {
+        let users: Vec<i64> = std::mem::take(&mut *self.0.lock().expect("changed users lock"))
+            .into_iter()
+            .collect();
+        if users.is_empty() {
+            return;
+        }
+        let _db = poller.db().await;
+        if let Err(err) = announce_presence(&poller.pool, crate::realtime::hub(), &users).await {
+            tracing::warn!("could not announce pilot changes: {err}");
+        }
+    }
 }
 
 /// A tick that did nothing because Tranquility is not up.
@@ -196,45 +248,46 @@ fn skipped_offline(tier: &'static str) {
 }
 
 /// Characters whose user has been active within the last 5 minutes and that hold a token EVE
-/// has not refused. With `online_only`, also restricted to those currently flagged online
-/// (the tier-2 set).
-async fn active_characters(pool: &PgPool, online_only: bool) -> Result<Vec<Due>, sqlx::Error> {
-    let rows = if online_only {
-        sqlx::query!(
-            r#"select c.id, c.user_id as "user_id!"
+/// has not refused (the tier-1 set).
+async fn active_characters(pool: &PgPool) -> Result<Vec<Due>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"select c.id, c.user_id as "user_id!"
+             from characters c
+             join users u on u.id = c.user_id
+             where u.last_active_at > now() - interval '5 minutes'
+               and exists (select 1 from esi_tokens t
+                           where t.character_id = c.id and t.rejected_at is null)"#
+    )
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|r| Due {
+        character_id: r.id,
+        user_id: r.user_id,
+    })
+    .collect();
+    Ok(rows)
+}
+
+/// [`active_characters`], restricted to those currently flagged online (the tier-2 set).
+async fn online_characters(pool: &PgPool) -> Result<Vec<Due>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"select c.id, c.user_id as "user_id!"
              from characters c
              join users u on u.id = c.user_id
              join character_status s on s.character_id = c.id
              where u.last_active_at > now() - interval '5 minutes' and s.online
                and exists (select 1 from esi_tokens t
                            where t.character_id = c.id and t.rejected_at is null)"#
-        )
-        .fetch_all(pool)
-        .await?
-        .into_iter()
-        .map(|r| Due {
-            character_id: r.id,
-            user_id: r.user_id,
-        })
-        .collect()
-    } else {
-        sqlx::query!(
-            r#"select c.id, c.user_id as "user_id!"
-             from characters c
-             join users u on u.id = c.user_id
-             where u.last_active_at > now() - interval '5 minutes'
-               and exists (select 1 from esi_tokens t
-                           where t.character_id = c.id and t.rejected_at is null)"#
-        )
-        .fetch_all(pool)
-        .await?
-        .into_iter()
-        .map(|r| Due {
-            character_id: r.id,
-            user_id: r.user_id,
-        })
-        .collect()
-    };
+    )
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|r| Due {
+        character_id: r.id,
+        user_id: r.user_id,
+    })
+    .collect();
     Ok(rows)
 }
 
@@ -279,8 +332,7 @@ where
     let mut set = JoinSet::new();
     for &item in items {
         // Acquiring before spawning is the backpressure: never more than CONCURRENCY tasks.
-        let permit = permits
-            .clone()
+        let permit = Arc::clone(&permits)
             .acquire_owned()
             .await
             .expect("semaphore open");
@@ -305,7 +357,7 @@ where
     let failed = Arc::new(Mutex::new((0usize, None::<String>)));
     run_bounded(due, CONCURRENCY, |d| {
         let poll = timeout(POLL_TIMEOUT, f(d));
-        let failed = failed.clone();
+        let failed = Arc::clone(&failed);
         async move {
             let err = match poll.await {
                 Ok(Ok(())) => return,
@@ -323,15 +375,15 @@ where
     let (count, sample) = std::mem::take(&mut *failed.lock().expect("poll failures lock"));
     let polls = |outcome: &'static str, n: usize| {
         metrics::counter!("ws_tracking_polls_total", "tier" => tier, "outcome" => outcome)
-            .increment(n as u64);
+            .increment(u64::try_from(n).expect("usize fits in u64"));
     };
     polls("ok", due.len() - count);
     polls("failed", count);
     let Some(sample) = sample else {
-        streak.record(false, Instant::now());
+        streak.record_success();
         return;
     };
-    if streak.record(true, Instant::now()) {
+    if streak.record_failure(Instant::now()) {
         tracing::error!(
             failed = count,
             polls = due.len(),
@@ -351,7 +403,7 @@ where
 
 /// Poll one character's online state (tier 1). A failure skips the character; the next tick
 /// retries.
-async fn poll_online(poller: Arc<Poller>, due: Due) -> Poll {
+async fn poll_online(poller: Arc<Poller>, due: Due, changed: Changed) -> Poll {
     let Some(token) = poller.token(due.character_id, &[Scope::ReadOnline]).await? else {
         return Ok(());
     };
@@ -366,7 +418,7 @@ async fn poll_online(poller: Arc<Poller>, due: Due) -> Poll {
     // Written only on a transition, which is also when the user is pinged: a row comes
     // back only when one was inserted or actually changed. `last_online_at` moves on both
     // edges, so once offline it says when they were last seen online, to within a tick.
-    let changed = {
+    let flipped = {
         let _db = poller.db().await;
         sqlx::query_scalar!(
             "insert into character_status (character_id, online, last_online_at)
@@ -385,22 +437,16 @@ async fn poll_online(poller: Arc<Poller>, due: Due) -> Poll {
         .map_err(|err| err.to_string())?
         .is_some()
     };
-    if changed {
-        poller.users.publish(
-            due.user_id,
-            UserEvent::CharacterStatusChanged {
-                character_id: due.character_id,
-            },
-        );
-        announce_presence(&poller, due.user_id).await;
+    if flipped {
+        changed.add(&poller, due);
     }
     Ok(())
 }
 
 /// Poll one character's location and ship (tier 2). The two use independent scopes, so a
-/// missing one skips just that field, and one failing does not stop the other. Docking is
-/// left null until we cache those entities.
-async fn poll_location_ship(poller: Arc<Poller>, due: Due) -> Poll {
+/// missing one skips just that field, and one failing does not stop the other. They are
+/// asked for side by side, since a poll's time is mostly spent waiting on ESI.
+async fn poll_location_ship(poller: Arc<Poller>, due: Due, changed: Changed) -> Poll {
     let id = due.character_id;
     let Some(token) = poller
         .token(id, &[Scope::ReadLocation, Scope::ReadShipType])
@@ -408,29 +454,40 @@ async fn poll_location_ship(poller: Arc<Poller>, due: Due) -> Poll {
     else {
         return Ok(());
     };
-    let location = if token.has_scope(Scope::ReadLocation) {
-        poll_location(&poller, &token.access_token, id).await
-    } else {
-        Ok(false)
+    let location = async {
+        if !token.has_scope(Scope::ReadLocation) {
+            return (Ok(false), None);
+        }
+        match poll_location(&poller, &token.access_token, id).await {
+            Ok((moved, structure_id)) => (Ok(moved), structure_id),
+            Err(err) => (Err(err), None),
+        }
     };
-    let ship = if token.has_scope(Scope::ReadShipType) {
+    let ship = async {
+        if !token.has_scope(Scope::ReadShipType) {
+            return Ok(false);
+        }
         poll_ship(&poller, &token.access_token, id).await
-    } else {
-        Ok(false)
+    };
+    let ((location, structure_id), ship) = tokio::join!(location, ship);
+    let named = match structure_id {
+        Some(structure_id) => name_structure(&poller, id, structure_id).await,
+        None => false,
     };
 
-    if matches!(location, Ok(true)) || matches!(ship, Ok(true)) {
-        poller.users.publish(
-            due.user_id,
-            UserEvent::CharacterStatusChanged { character_id: id },
-        );
-        announce_presence(&poller, due.user_id).await;
+    if matches!(location, Ok(true)) || matches!(ship, Ok(true)) || named {
+        changed.add(&poller, due);
     }
     location.and(ship).map(|_| ())
 }
 
-/// The location half of tier 2. `Ok(true)` when it moved.
-async fn poll_location(poller: &Poller, token: &str, id: i64) -> Result<bool, String> {
+/// The location half of tier 2: whether it moved, docked or undocked, and the structure
+/// it is docked in, if any.
+async fn poll_location(
+    poller: &Poller,
+    token: &str,
+    id: i64,
+) -> Result<(bool, Option<i64>), String> {
     let location = poller
         .esi
         .character_location(token, id)
@@ -445,21 +502,24 @@ async fn poll_location(poller: &Poller, token: &str, id: i64) -> Result<bool, St
                      select solar_system_id from character_status where character_id = $1
                  )
                  update character_status
-                 set solar_system_id = $2, station_id = null, structure_id = null,
+                 set solar_system_id = $2, station_id = $3, structure_id = $4,
                      updated_at = now()
                  where character_id = $1
                    and (solar_system_id is distinct from $2
-                        or station_id is not null or structure_id is not null)
+                        or station_id is distinct from $3
+                        or structure_id is distinct from $4)
                  returning (select solar_system_id from prev) as "prev_solar_system_id?""#,
             id,
             location.solar_system_id,
+            location.station_id,
+            location.structure_id,
         )
         .fetch_optional(&poller.pool)
         .await
         .map_err(|err| err.to_string())?
     };
     let Some(moved) = moved else {
-        return Ok(false);
+        return Ok((false, location.structure_id));
     };
 
     // A system change is a potential wormhole transit: jump capture must never
@@ -475,7 +535,73 @@ async fn poll_location(poller: &Poller, token: &str, id: i64) -> Result<bool, St
             tracing::error!("jump capture failed for character {id}: {err}");
         }
     }
-    Ok(true)
+    Ok((true, location.structure_id))
+}
+
+/// Name the structure `id` is docked in with their own token, unless it already has a name
+/// or was tried too recently. `true` when this named it, so the pilot lists refetch.
+async fn name_structure(poller: &Poller, id: i64, structure_id: i64) -> bool {
+    if !poller.structures.due(structure_id, id) {
+        return false;
+    }
+    let named = {
+        let _db = poller.db().await;
+        is_named(&poller.pool, structure_id).await
+    };
+    match named {
+        Ok(true) => {
+            poller.structures.wait(structure_id, id, wait::NAMED);
+            return false;
+        }
+        Ok(false) => {}
+        Err(err) => {
+            tracing::warn!("could not look up structure {structure_id}: {err}");
+            poller.structures.wait(structure_id, id, wait::FAILED);
+            return false;
+        }
+    }
+    let token = match poller.token(id, &[Scope::ReadStructures]).await {
+        Ok(Some(token)) if token.has_scope(Scope::ReadStructures) => token,
+        _ => {
+            poller
+                .structures
+                .wait(structure_id, id, wait::NO_PERMISSION);
+            return false;
+        }
+    };
+    let structure = match poller
+        .esi
+        .structure(&token.access_token, structure_id)
+        .await
+    {
+        Ok(structure) => structure,
+        Err(EsiError::Api {
+            status: 403 | 404, ..
+        }) => {
+            poller.structures.wait(structure_id, id, wait::REFUSED);
+            return false;
+        }
+        Err(err) => {
+            tracing::warn!("could not fetch structure {structure_id}: {err}");
+            poller.structures.wait(structure_id, id, wait::FAILED);
+            return false;
+        }
+    };
+    let stored = {
+        let _db = poller.db().await;
+        store_structure(&poller.pool, structure_id, &structure).await
+    };
+    match stored {
+        Ok(()) => {
+            poller.structures.wait(structure_id, id, wait::NAMED);
+            true
+        }
+        Err(err) => {
+            tracing::warn!("could not store structure {structure_id}: {err}");
+            poller.structures.wait(structure_id, id, wait::FAILED);
+            false
+        }
+    }
 }
 
 /// The ship half of tier 2. `Ok(true)` when the hull or its name changed.
@@ -519,22 +645,23 @@ async fn poll_ship(poller: &Poller, token: &str, id: i64) -> Result<bool, String
         || row.prev_ship_name.as_deref() != Some(ship.ship_name.as_str()))
 }
 
-/// Tell every map this user shares their position with that its pilot list moved. The
-/// per-user ping above only reaches the pilot's own tabs.
-async fn announce_presence(poller: &Poller, user_id: i64) {
-    let map_ids = {
-        let _db = poller.db().await;
-        sqlx::query_scalar!(
-            "select map_id from map_user_settings where user_id = $1 and tracking_allowed",
-            user_id,
-        )
-        .fetch_all(&poller.pool)
-        .await
-    };
-    let Ok(map_ids) = map_ids else {
-        return;
-    };
+/// Tell every map these users share their position with that its pilot list moved, once
+/// per map however many of them are on it. The per-user ping only reaches the pilots' own
+/// tabs.
+pub async fn announce_presence(
+    pool: &PgPool,
+    hub: &MapHub,
+    user_ids: &[i64],
+) -> Result<(), sqlx::Error> {
+    let map_ids = sqlx::query_scalar!(
+        r#"select distinct map_id as "map_id!" from map_user_settings
+           where user_id = any($1) and tracking_allowed"#,
+        user_ids,
+    )
+    .fetch_all(pool)
+    .await?;
     for map_id in map_ids {
-        crate::realtime::hub().publish(crate::realtime::MapEvent::CharactersChanged { map_id });
+        hub.publish(MapEvent::CharactersChanged { map_id });
     }
+    Ok(())
 }

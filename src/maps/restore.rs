@@ -2,6 +2,8 @@
 //! everything that cascaded with them (connections, signatures), and restoring replays it
 //! under the original ids so the pieces still line up.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use super::command::{CommandOutput, Effect, MapCommand, Tx};
@@ -41,44 +43,20 @@ impl RestoreSystems {
 
     /// Take in another snapshot of the same map, each row once.
     pub(super) fn absorb(&mut self, other: RestoreSystems) {
-        for s in other.systems {
-            if !self.systems.iter().any(|known| known.id == s.id) {
-                self.systems.push(s);
-            }
-        }
-        for c in other.connections {
-            if !self.connections.iter().any(|known| known.id == c.id) {
-                self.connections.push(c);
-            }
-        }
-        for s in other.signatures {
-            if !self.signatures.iter().any(|known| known.id == s.id) {
-                self.signatures.push(s);
-            }
-        }
-        for j in other.jumps {
-            if !self.jumps.iter().any(|known| known.id == j.id) {
-                self.jumps.push(j);
-            }
-        }
+        merge(&mut self.systems, other.systems, |s| s.id);
+        merge(&mut self.connections, other.connections, |c| c.id);
+        merge(&mut self.signatures, other.signatures, |s| s.id);
+        merge(&mut self.jumps, other.jumps, |j| j.id);
     }
 }
 
-/// Take the signatures the snapshot claimed that the database will not cascade: the ones in
-/// the systems staying on the map, linked to a connection that died with its endpoint.
-/// Runs after the placements go, because deleting a scan takes the node it raised, and one
-/// of those may be the placement this removal is about.
-pub(super) async fn remove_captured_signatures(
-    tx: &mut Tx<'_>,
-    map_id: i64,
-    snapshot: &RestoreSystems,
-) -> Result<()> {
-    let ids: Vec<i64> = snapshot.signatures.iter().map(|s| s.id).collect();
-    if ids.is_empty() {
-        return Ok(());
+/// Append the rows of `more` that `rows` does not hold yet, keeping the order.
+fn merge<T>(rows: &mut Vec<T>, more: Vec<T>, id: impl Fn(&T) -> i64) {
+    if more.is_empty() {
+        return;
     }
-    signatures::delete(tx, map_id, &ids).await?;
-    Ok(())
+    let mut known: HashSet<i64> = rows.iter().map(&id).collect();
+    rows.extend(more.into_iter().filter(|row| known.insert(id(row))));
 }
 
 /// Snapshot placements and their cascade so a removal can be undone.
@@ -95,7 +73,7 @@ pub(super) async fn capture_systems(
     // its own. A restore puts its placements back before its edges, but an edge whose
     // other end it does not carry depends on that end still being there -- and it may not
     // be. Replaying a removal walks through states the original never had: taking a scan
-    // leaves its hole's far side with no edges for a moment, `delete_if_orphan` clears it,
+    // leaves its hole's far side with no edges for a moment, the orphan cleanup clears it,
     // and the restore that follows is left holding an edge to nothing. Reinserting a
     // placement that never went is a no-op, so carrying them costs nothing.
     let far_ends: Vec<i64> = connections
@@ -143,9 +121,7 @@ pub(super) async fn apply_restore_systems(tx: &mut Tx<'_>, cmd: RestoreSystems) 
             inserted.push(s.id);
         }
     }
-    for j in &cmd.jumps {
-        jumps::reinsert(tx, cmd.map_id, j).await?;
-    }
+    jumps::reinsert(tx, cmd.map_id, &cmd.jumps).await?;
 
     // Undoing a restore drops exactly what was put back, connections and signatures
     // included: a stale-clean can restore edges whose endpoints were never removed, and a
@@ -176,7 +152,7 @@ pub(super) async fn apply_restore_systems(tx: &mut Tx<'_>, cmd: RestoreSystems) 
         .emit_all(events));
     }
     let label = format!("restored {}", cmd.label());
-    let count = cmd.systems.len() as i64;
+    let count = cmd.systems.len();
     Ok(Effect::new("systems.restored", label, CommandOutput::None)
         .entries(count)
         .undo_with(inverse)
@@ -198,11 +174,7 @@ pub struct RemoveRestored {
 
 pub(super) async fn apply_remove_restored(tx: &mut Tx<'_>, cmd: RemoveRestored) -> Result<Effect> {
     let mut snapshot = capture_systems(tx, cmd.map_id, &cmd.system_ids).await?;
-    for id in &cmd.connection_ids {
-        if let Some(extra) = capture_connection(tx, cmd.map_id, *id).await? {
-            snapshot.absorb(extra);
-        }
-    }
+    snapshot.absorb(capture_connections(tx, cmd.map_id, &cmd.connection_ids).await?);
     let extra = super::signatures::capture_signatures(tx, cmd.map_id, &cmd.signature_ids).await?;
     snapshot.absorb(RestoreSystems {
         map_id: cmd.map_id,
@@ -215,7 +187,7 @@ pub(super) async fn apply_remove_restored(tx: &mut Tx<'_>, cmd: RemoveRestored) 
     connections::delete(tx, cmd.map_id, &cmd.connection_ids).await?;
     placements::delete(tx, cmd.map_id, &cmd.system_ids).await?;
 
-    let count = (cmd.system_ids.len() + cmd.connection_ids.len() + cmd.signature_ids.len()) as i64;
+    let count = cmd.system_ids.len() + cmd.connection_ids.len() + cmd.signature_ids.len();
     Ok(
         Effect::new("systems.removed", "undid a restore", CommandOutput::None)
             .entries(count)
@@ -224,23 +196,30 @@ pub(super) async fn apply_remove_restored(tx: &mut Tx<'_>, cmd: RemoveRestored) 
     )
 }
 
-/// Snapshot one connection so removing it can be undone, with the signatures linked to it
-/// (they outlive it unlinked, and restoring it links them again) and its jump log.
-pub(super) async fn capture_connection(
+/// Snapshot connections so removing them can be undone, with the signatures linked to them
+/// and their jump log, in three queries however many there are. The ones not on the map
+/// are left out.
+pub(super) async fn capture_connections(
     tx: &mut Tx<'_>,
     map_id: i64,
-    connection_id: i64,
-) -> Result<Option<RestoreSystems>> {
-    let Some(connection) = connections::snapshot(tx, map_id, connection_id).await? else {
-        return Ok(None);
-    };
-    let signatures = signatures::snapshot_around(tx, map_id, &[], &[connection_id]).await?;
-    let jumps = jumps::snapshot_through(tx, map_id, &[connection_id]).await?;
-    Ok(Some(RestoreSystems {
+    connection_ids: &[i64],
+) -> Result<RestoreSystems> {
+    let mut snapshot = RestoreSystems {
         map_id,
         systems: Vec::new(),
-        connections: vec![connection],
-        signatures,
-        jumps,
-    }))
+        connections: Vec::new(),
+        signatures: Vec::new(),
+        jumps: Vec::new(),
+    };
+    if connection_ids.is_empty() {
+        return Ok(snapshot);
+    }
+    snapshot.connections = connections::snapshot_many(tx, map_id, connection_ids).await?;
+    if snapshot.connections.is_empty() {
+        return Ok(snapshot);
+    }
+    let found: Vec<i64> = snapshot.connections.iter().map(|c| c.id).collect();
+    snapshot.signatures = signatures::snapshot_around(tx, map_id, &[], &found).await?;
+    snapshot.jumps = jumps::snapshot_through(tx, map_id, &found).await?;
+    Ok(snapshot)
 }

@@ -128,15 +128,14 @@ impl Config {
                 client_id: required("EVE_CLIENT_ID")?,
                 client_secret: required("EVE_CLIENT_SECRET")?,
                 redirect_uri: redirect_uri.clone(),
-                scopes: Scope::ALL.to_vec(),
+                scopes: Scope::REQUIRED.to_vec(),
             },
             grid: grid_from_env(),
             esi_base_url: std::env::var("ESI_BASE_URL")
                 .unwrap_or_else(|_| crate::esi::BASE_URL.to_string()),
             discord: discord_from_env(),
             uploads_dir: nonempty("UPLOADS_DIR")
-                .map(Into::into)
-                .unwrap_or_else(|| std::path::PathBuf::from("data/uploads")),
+                .map_or_else(|| std::path::PathBuf::from("data/uploads"), Into::into),
             allowed_logins: allowlist("ALLOWED_AFFILIATION_IDS")?,
             map_creators: allowlist("MAP_CREATOR_AFFILIATION_IDS")?,
             announcement: announcement_from_env(),
@@ -317,8 +316,12 @@ mod tests {
     // pass for present and then panic on first use, several minutes into the first boot.
     #[test]
     fn a_variable_set_to_nothing_is_missing() {
+        // SAFETY: test-only, and no other test reads or writes these variables.
         unsafe {
             std::env::set_var("WS_TEST_BLANK", "   ");
+        }
+        // SAFETY: as above.
+        unsafe {
             std::env::set_var("WS_TEST_FILLED", " kept ");
         }
         assert!(nonempty("WS_TEST_BLANK").is_none());

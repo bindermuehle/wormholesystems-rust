@@ -1,6 +1,8 @@
 //! The live feed: zKillboard's R2Z2 stream, one killmail at a time.
 
+use std::collections::HashMap;
 use std::fmt::Display;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -45,22 +47,118 @@ const WALK_LIMIT: i64 = 100;
 
 /// How long the feed may keep failing before that is an error rather than a warning. A
 /// failed fetch is retried after 30s, and zKillboard has bad minutes.
-const FAILING_FOR: Duration = Duration::from_secs(15 * 60);
+const FAILING_FOR: Duration = Duration::from_mins(15);
+
+/// The longest wait after a 429, whatever `Retry-After` says. R2Z2 bans an address for an
+/// hour, so past that the feed is only being asked again too late.
+const THROTTLED_AT_MOST: Duration = Duration::from_hours(1);
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
+/// The feed answered 429. Every app on the address counts against the same limit, so this
+/// can come from a neighbour's polling as much as ours.
+#[derive(Debug)]
+struct Throttled {
+    retry_after: Option<Duration>,
+}
+
+impl Display for Throttled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.retry_after {
+            Some(wait) => write!(
+                f,
+                "rate limited by the feed (retry after {}s)",
+                wait.as_secs()
+            ),
+            None => f.write_str("rate limited by the feed"),
+        }
+    }
+}
+
+impl std::error::Error for Throttled {}
+
+/// A response, or the error for its status: [`Throttled`] for a 429.
+fn checked(res: reqwest::Response) -> Result<reqwest::Response, BoxError> {
+    if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        let retry_after = res
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(parse_retry_after);
+        return Err(Throttled { retry_after }.into());
+    }
+    Ok(res.error_for_status()?)
+}
+
+/// `Retry-After` as seconds. The HTTP-date form is not worth a date parser here: without
+/// it the wait is the backoff, which is long enough.
+fn parse_retry_after(header: &str) -> Option<Duration> {
+    let seconds: f64 = header.trim().parse().ok()?;
+    // `NaN` and `inf` parse as floats too; `NaN.max(0.0)` would quietly read as zero.
+    if !seconds.is_finite() {
+        return None;
+    }
+    Duration::try_from_secs_f64(seconds.max(0.0)).ok()
+}
+
+/// How long to wait before asking the feed again.
+///
+/// Any failure but a 429 is retried after `retry`. Each 429 in a row doubles that, and the
+/// wait is never shorter than `Retry-After` asks nor longer than [`THROTTLED_AT_MOST`]: one
+/// that keeps coming is a block on the address, and asking every 30 seconds only keeps
+/// it going.
+#[derive(Debug, Default)]
+struct Backoff {
+    throttled: u32,
+}
+
+impl Backoff {
+    fn after(&mut self, err: &BoxError, retry: Duration) -> Duration {
+        let Some(throttled) = err.downcast_ref::<Throttled>() else {
+            self.throttled = 0;
+            return retry;
+        };
+        self.throttled = self.throttled.saturating_add(1);
+        throttled_wait(retry, self.throttled, throttled.retry_after)
+    }
+
+    fn reset(&mut self) {
+        self.throttled = 0;
+    }
+}
+
+/// The wait after the `nth` 429 in a row (from 1).
+fn throttled_wait(retry: Duration, nth: u32, retry_after: Option<Duration>) -> Duration {
+    let doubled = retry.saturating_mul(2u32.saturating_pow(nth - 1));
+    doubled
+        .max(retry_after.unwrap_or_default())
+        .min(THROTTLED_AT_MOST)
+}
+
 /// Log a failed step of the feed: a warning, or the one error once it has kept failing.
 /// The error goes in a field so the reports group as one issue.
-fn failed(streak: &Streak, err: impl Display) {
-    if streak.record(true, Instant::now()) {
+fn failed(streak: &Streak, err: impl Display, wait: Duration) {
+    let retry_in = wait.as_secs();
+    if streak.record_failure(Instant::now()) {
         tracing::error!(
             error = %err,
+            retry_in,
             "killmail ingest has failed for {} minutes",
             FAILING_FOR.as_secs() / 60
         );
     } else {
-        tracing::warn!(error = %err, "killmail ingest failed, retrying");
+        tracing::warn!(error = %err, retry_in, "killmail ingest failed, retrying");
     }
+}
+
+/// Log a failed step, and wait out the backoff it earned.
+async fn retry_later(streak: &Streak, backoff: &mut Backoff, err: &BoxError, timing: Timing) {
+    let wait = backoff.after(err, timing.retry);
+    if err.is::<Throttled>() {
+        metrics::counter!("ws_killmail_ingest_throttled_total").increment(1);
+    }
+    failed(streak, err, wait);
+    tokio::time::sleep(wait).await;
 }
 
 /// How the feed is paced. Its own type so the tests can run it in milliseconds.
@@ -75,6 +173,8 @@ pub struct Timing {
     pub head_check: Duration,
     /// How long a kill the head already counts may stay missing before it is given up on.
     pub missing_grace: Duration,
+    /// How long to wait after a failed fetch. A 429 waits longer; see [`Backoff`].
+    pub retry: Duration,
 }
 
 impl Default for Timing {
@@ -83,14 +183,16 @@ impl Default for Timing {
             // zKillboard asks for 6 seconds: a kill arrives every 5.5 on average, so
             // polling faster gains nothing.
             idle: Duration::from_secs(6),
-            // R2Z2 bans an address for an hour past 15 requests a second, so catching up
-            // stays well under that.
-            pace: Duration::from_millis(100),
+            // R2Z2 allows 15 requests a second per address and bans it for an hour past
+            // that. Other apps on the same address (a killfeed, say) catch up after an
+            // outage at the same moment we do, so this leaves them most of the budget.
+            pace: Duration::from_millis(250),
             head_check: Duration::from_secs(60),
             // The kill was asked for before it existed, while idling at the head, so a
             // cache in front of the bucket may answer that 404 again for a little while
             // after the file arrived. Five tries before it counts as gone.
             missing_grace: Duration::from_secs(30),
+            retry: Duration::from_secs(30),
         }
     }
 }
@@ -105,7 +207,7 @@ impl Default for Timing {
 #[doc(hidden)]
 pub async fn listen(
     pool: PgPool,
-    alerts: Option<std::sync::Arc<crate::alerts::Runtime>>,
+    alerts: Option<Arc<crate::alerts::Runtime>>,
     base: String,
     timing: Timing,
 ) {
@@ -122,6 +224,7 @@ pub async fn listen(
     // The kill that is missing under the head, and since when.
     let mut missing: Option<(i64, Instant)> = None;
     let streak = Streak::new(FAILING_FOR);
+    let mut backoff = Backoff::default();
     loop {
         let last = match cursor {
             Some(seq) => seq,
@@ -131,25 +234,29 @@ pub async fn listen(
                     seq
                 }
                 Err(err) => {
-                    failed(&streak, err);
-                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    retry_later(&streak, &mut backoff, &err, timing).await;
                     continue;
                 }
             },
         };
-        if head.due(timing.head_check) {
-            head.check(&http, &base, last).await;
+        if head.due(timing.head_check)
+            && let Err(err) = head.check(&http, &base, last).await
+        {
+            retry_later(&streak, &mut backoff, &err, timing).await;
+            continue;
         }
         let next = last + 1;
         match ingest(&pool, &http, &base, alerts.as_ref(), next).await {
             Ok(true) => {
-                streak.record(false, Instant::now());
+                streak.record_success();
+                backoff.reset();
                 cursor = Some(next);
                 missing = None;
                 tokio::time::sleep(timing.pace).await;
             }
             Ok(false) => {
-                streak.record(false, Instant::now());
+                streak.record_success();
+                backoff.reset();
                 // Past the head: it has not happened yet.
                 let Some(to) = head.seq.filter(|&head| next <= head) else {
                     tokio::time::sleep(timing.idle).await;
@@ -170,24 +277,22 @@ pub async fn listen(
                             resume - 1
                         );
                         metrics::counter!("ws_killmail_ingest_skipped_total")
-                            .increment((resume - next) as u64);
+                            .increment(u64::try_from(resume - next).unwrap_or(0));
                         if let Err(err) = advance(&pool, resume - 1).await {
-                            failed(&streak, err);
+                            failed(&streak, err, Duration::ZERO);
                         }
                         cursor = Some(resume - 1);
                         missing = None;
                     }
                     Err(err) => {
                         metrics::counter!("ws_killmail_ingest_errors_total").increment(1);
-                        failed(&streak, err);
-                        tokio::time::sleep(Duration::from_secs(30)).await;
+                        retry_later(&streak, &mut backoff, &err, timing).await;
                     }
                 }
             }
             Err(err) => {
                 metrics::counter!("ws_killmail_ingest_errors_total").increment(1);
-                failed(&streak, err);
-                tokio::time::sleep(Duration::from_secs(30)).await;
+                retry_later(&streak, &mut backoff, &err, timing).await;
             }
         }
     }
@@ -206,33 +311,39 @@ impl Head {
     }
 
     /// Read the head again, and say how far behind it `cursor` is. A failed read keeps
-    /// what was known and waits for the next check.
-    async fn check(&mut self, http: &reqwest::Client, base: &str, cursor: i64) {
+    /// what was known and waits for the next check, except a 429, which is handed back so
+    /// the feed is left alone for a while.
+    async fn check(
+        &mut self,
+        http: &reqwest::Client,
+        base: &str,
+        cursor: i64,
+    ) -> Result<(), BoxError> {
         self.checked = Some(Instant::now());
         match head_of(http, base).await {
             Ok(seq) => self.seq = Some(seq),
+            Err(err) if err.is::<Throttled>() => return Err(err),
             Err(err) => {
                 tracing::warn!("killmail ingest: could not read the head of the feed: {err}");
-                return;
+                return Ok(());
             }
         }
         let behind = self.seq.map_or(0, |head| (head - cursor).max(0));
-        metrics::gauge!("ws_killmail_ingest_behind").set(behind as f64);
+        metrics::gauge!("ws_killmail_ingest_behind").set(to_f64(behind));
         if behind > BEHIND_WARN {
             tracing::warn!("killmail ingest is {behind} kills behind the feed (at {cursor})");
         }
+        Ok(())
     }
 }
 
 /// The last sequence the feed has published.
 async fn head_of(http: &reqwest::Client, base: &str) -> Result<i64, BoxError> {
-    let head: R2Z2Sequence = http
+    let head = http
         .get(format!("{base}/ephemeral/sequence.json"))
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
+    let head: R2Z2Sequence = checked(head)?.json().await?;
     Ok(head.sequence)
 }
 
@@ -245,7 +356,7 @@ async fn present(http: &reqwest::Client, base: &str, seq: i64) -> Result<bool, B
     if res.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(false);
     }
-    res.error_for_status()?;
+    checked(res)?;
     Ok(true)
 }
 
@@ -319,11 +430,17 @@ async fn ingest(
     if res.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(false); // not there: not yet, or no longer
     }
-    let body = res.error_for_status()?.text().await?;
-    let Ok(km) = serde_json::from_str::<R2Z2Killmail>(&body) else {
-        // Empty/garbage frame: advance past it.
-        advance(pool, next).await?;
-        return Ok(true);
+    let body = checked(res)?.text().await?;
+    let km = match serde_json::from_str::<R2Z2Killmail>(&body) {
+        Ok(km) => km,
+        Err(err) => {
+            // Empty/garbage frame: advance past it, but say so. A change upstream would
+            // otherwise skip every kill without a word.
+            metrics::counter!("ws_killmail_ingest_unparsed_total").increment(1);
+            tracing::warn!("killmail ingest: skipping {next}, the frame does not parse: {err}");
+            advance(pool, next).await?;
+            return Ok(true);
+        }
     };
 
     let solar_system_id = km.esi.solar_system_id.unwrap_or(0);
@@ -337,7 +454,7 @@ async fn ingest(
             orgs: serde_json::to_value(extract_orgs(&km.esi))?,
             detail: extract_detail(&km.esi, &km.zkb),
         };
-        super::insert_rows(pool, std::slice::from_ref(&row), true).await?;
+        super::insert_rows(pool, std::slice::from_ref(&row), super::Source::Live).await?;
         metrics::counter!("ws_killmails_ingested_total").increment(1);
         if let Some(lag) = lag_seconds(&row.time) {
             metrics::gauge!("ws_killmail_ingest_lag_seconds").set(lag);
@@ -381,18 +498,19 @@ fn offer(alerts: &mpsc::Sender<Pending>, row: KillmailRow) {
 /// kill after that would go without alerts and without a word.
 async fn alert_loop(
     pool: PgPool,
-    alerts: std::sync::Arc<crate::alerts::Runtime>,
+    alerts: Arc<crate::alerts::Runtime>,
     mut queue: mpsc::Receiver<Pending>,
 ) {
     let mut pending = Vec::with_capacity(ALERT_BATCH);
     while queue.recv_many(&mut pending, ALERT_BATCH).await > 0 {
         let batch = std::mem::replace(&mut pending, Vec::with_capacity(ALERT_BATCH));
-        let (pool, alerts) = (pool.clone(), alerts.clone());
+        let (pool, alerts) = (pool.clone(), Arc::clone(&alerts));
         crate::background::guarded("killmail alerts", move || async move {
-            let mut kills = Vec::with_capacity(batch.len());
-            for p in batch {
-                kills.push(kill_for(&pool, p.killmail_id, p.solar_system_id, &p.detail).await);
+            // Most of the time nobody watches for kills, and naming them is wasted work.
+            if !alerts.watches_killmails(&pool).await {
+                return;
             }
+            let kills = kills_for(&pool, &batch).await;
             let out = alerts.killmails(&pool, &kills).await;
             alerts.enqueue(&pool, out).await;
         })
@@ -400,58 +518,82 @@ async fn alert_loop(
     }
 }
 
-/// A kill as the alerts read it. Names come from what is already stored, since "Someone
-/// lost a Loki" now beats a complete message a minute later.
-async fn kill_for(
-    pool: &PgPool,
-    killmail_id: i64,
-    solar_system_id: i64,
-    detail: &Detail,
-) -> crate::alerts::killmail::Kill {
+/// The batch as the alerts read it. Names come from what is already stored, since "Someone
+/// lost a Loki" now beats a complete message a minute later. One query names the whole
+/// batch.
+async fn kills_for(pool: &PgPool, batch: &[Pending]) -> Vec<crate::alerts::killmail::Kill> {
     use crate::alerts::filters::Candidates;
-    let named = sqlx::query!(
-        r#"select vc.name as "victim_name?", vt.name as "victim_ship?",
-                  fc.name as "attacker_name?", vt.group_id as "victim_ship_group?",
-                  ft.group_id as "attacker_ship_group?"
-           from (select 1) as one
-           left join characters vc on vc.id = $1
-           left join characters fc on fc.id = $2
-           left join types vt on vt.id = $3
-           left join types ft on ft.id = $4"#,
-        detail.victim_character_id,
-        detail.final_blow_character_id,
-        detail.victim_ship_type_id,
-        detail.final_blow_ship_type_id,
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
-
-    crate::alerts::killmail::Kill {
-        id: killmail_id,
-        solar_system_id,
-        candidates: Candidates {
-            victim_character: detail.victim_character_id,
-            victim_corporation: detail.victim_corporation_id,
-            victim_alliance: detail.victim_alliance_id,
-            victim_ship_type: detail.victim_ship_type_id,
-            victim_ship_group: named.as_ref().and_then(|n| n.victim_ship_group),
-            attacker_character: detail.final_blow_character_id,
-            attacker_corporation: detail.final_blow_corporation_id,
-            attacker_alliance: detail.final_blow_alliance_id,
-            attacker_ship_type: detail.final_blow_ship_type_id,
-            attacker_ship_group: named.as_ref().and_then(|n| n.attacker_ship_group),
-        },
-        victim_name: named.as_ref().and_then(|n| n.victim_name.clone()),
-        victim_ship: named.as_ref().and_then(|n| n.victim_ship.clone()),
-        victim_ship_type_id: detail.victim_ship_type_id,
-        attacker_name: named.as_ref().and_then(|n| n.attacker_name.clone()),
-        total_value: detail.total_value,
-        attacker_count: detail.attacker_count,
-        is_solo: detail.is_solo,
-        is_npc: detail.is_npc,
+    let (mut characters, mut types) = (Vec::new(), Vec::new());
+    for p in batch {
+        characters.extend([
+            p.detail.victim_character_id,
+            p.detail.final_blow_character_id,
+        ]);
+        types.extend([
+            p.detail.victim_ship_type_id,
+            p.detail.final_blow_ship_type_id,
+        ]);
     }
+    let characters: Vec<i64> = characters.into_iter().flatten().collect();
+    let types: Vec<i64> = types.into_iter().flatten().collect();
+    let rows = sqlx::query!(
+        r#"select false as "is_type!", id as "id!", name as "name!", null::bigint as group_id
+           from characters where id = any($1)
+           union all
+           select true, id, name, group_id from types where id = any($2)"#,
+        &characters,
+        &types,
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_else(|err| {
+        tracing::warn!("killmail alerts: could not name the kills: {err}");
+        Vec::new()
+    });
+    let mut names = HashMap::new();
+    let mut ships = HashMap::new();
+    for row in rows {
+        if row.is_type {
+            ships.insert(row.id, (row.name, row.group_id));
+        } else {
+            names.insert(row.id, row.name);
+        }
+    }
+    let name = |id: Option<i64>| id.and_then(|id| names.get(&id).cloned());
+    let ship = |id: Option<i64>| id.and_then(|id| ships.get(&id));
+
+    batch
+        .iter()
+        .map(|p| {
+            let detail = &p.detail;
+            let victim_ship = ship(detail.victim_ship_type_id);
+            let attacker_ship = ship(detail.final_blow_ship_type_id);
+            crate::alerts::killmail::Kill {
+                id: p.killmail_id,
+                solar_system_id: p.solar_system_id,
+                candidates: Candidates {
+                    victim_character: detail.victim_character_id,
+                    victim_corporation: detail.victim_corporation_id,
+                    victim_alliance: detail.victim_alliance_id,
+                    victim_ship_type: detail.victim_ship_type_id,
+                    victim_ship_group: victim_ship.and_then(|s| s.1),
+                    attacker_character: detail.final_blow_character_id,
+                    attacker_corporation: detail.final_blow_corporation_id,
+                    attacker_alliance: detail.final_blow_alliance_id,
+                    attacker_ship_type: detail.final_blow_ship_type_id,
+                    attacker_ship_group: attacker_ship.and_then(|s| s.1),
+                },
+                victim_name: name(detail.victim_character_id),
+                victim_ship: victim_ship.map(|s| s.0.clone()),
+                victim_ship_type_id: detail.victim_ship_type_id,
+                attacker_name: name(detail.final_blow_character_id),
+                total_value: detail.total_value,
+                attacker_count: detail.attacker_count,
+                is_solo: detail.is_solo,
+                is_npc: detail.is_npc,
+            }
+        })
+        .collect()
 }
 
 /// Tell every map holding this system that something died in it. The event carries no
@@ -477,11 +619,21 @@ fn lag_seconds(killmail_time: &str) -> Option<f64> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?;
-    Some(now.as_secs_f64() - at.timestamp() as f64)
+    Some(now.as_secs_f64() - to_f64(at.timestamp()))
+}
+
+/// For the gauges, which take `f64`.
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "sequence numbers and Unix seconds stay far below 2^52, where f64 is exact"
+)]
+fn to_f64(n: i64) -> f64 {
+    n as f64
 }
 
 async fn advance(pool: &PgPool, seq: i64) -> Result<(), sqlx::Error> {
-    metrics::gauge!("ws_killmail_ingest_sequence").set(seq as f64);
+    metrics::gauge!("ws_killmail_ingest_sequence").set(to_f64(seq));
     sqlx::query!("update zkb_state set sequence_id = $1", seq)
         .execute(pool)
         .await?;
@@ -505,9 +657,9 @@ const NAME_RETRIES: u32 = 3;
 /// killmail alerts (which reach beyond the chain), the access search, and the threat
 /// analysis. With the bulk endpoint that is a call or two a minute, so not worth narrowing.
 pub(super) fn start_resolver(pool: PgPool, esi: EsiClient) {
-    let resolver = std::sync::Arc::new(tokio::sync::Mutex::new(NameResolver::default()));
+    let resolver = Arc::new(tokio::sync::Mutex::new(NameResolver::default()));
     crate::background::spawn_every("killmail names", Duration::from_secs(60), move || {
-        let (pool, esi, resolver) = (pool.clone(), esi.clone(), resolver.clone());
+        let (pool, esi, resolver) = (pool.clone(), esi.clone(), Arc::clone(&resolver));
         async move {
             resolver.lock().await.pass(&pool, &esi).await;
             Ok::<_, std::convert::Infallible>(())
@@ -518,7 +670,7 @@ pub(super) fn start_resolver(pool: PgPool, esi: EsiClient) {
 /// Where the name resolver has got to: the last `ingest_seq` it is done with, read from
 /// `zkb_state` once and kept here after, and how many passes the current batch has been
 /// held back for.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct NameResolver {
     mark: Option<i64>,
     held: u32,
@@ -573,7 +725,7 @@ async fn resolve_new(pool: &PgPool, esi: &EsiClient, from: i64, held: &mut u32) 
         let Some(last) = rows.last().map(|row| row.ingest_seq) else {
             return mark;
         };
-        let full = rows.len() as i64 == NAME_BATCH;
+        let full = i64::try_from(rows.len()) == Ok(NAME_BATCH);
 
         let mut characters = Vec::new();
         let mut corporations = Vec::new();
@@ -618,5 +770,59 @@ async fn resolve_new(pool: &PgPool, esi: &EsiClient, from: i64, held: &mut u32) 
         if !full {
             return mark;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RETRY: Duration = Duration::from_secs(30);
+
+    #[test]
+    fn each_429_in_a_row_doubles_the_wait_up_to_an_hour() {
+        let waits: Vec<u64> = (1..=9)
+            .map(|nth| throttled_wait(RETRY, nth, None).as_secs())
+            .collect();
+        assert_eq!(waits, [30, 60, 120, 240, 480, 960, 1920, 3600, 3600]);
+        assert_eq!(throttled_wait(RETRY, u32::MAX, None), THROTTLED_AT_MOST);
+    }
+
+    #[test]
+    fn retry_after_lengthens_the_wait_but_never_past_an_hour() {
+        let asked = |secs| Some(Duration::from_secs(secs));
+        assert_eq!(
+            throttled_wait(RETRY, 1, asked(300)),
+            Duration::from_secs(300)
+        );
+        // A shorter Retry-After than the backoff does not cut it short.
+        assert_eq!(throttled_wait(RETRY, 3, asked(5)), Duration::from_secs(120));
+        assert_eq!(throttled_wait(RETRY, 1, asked(86_400)), THROTTLED_AT_MOST);
+    }
+
+    #[test]
+    fn retry_after_is_a_finite_number_of_seconds() {
+        assert_eq!(parse_retry_after("120"), Some(Duration::from_secs(120)));
+        assert_eq!(
+            parse_retry_after(" 1.5 "),
+            Some(Duration::from_millis(1500))
+        );
+        assert_eq!(parse_retry_after("-3"), Some(Duration::ZERO));
+        assert_eq!(parse_retry_after("NaN"), None);
+        assert_eq!(parse_retry_after("Wed, 21 Oct 2026 07:28:00 GMT"), None);
+    }
+
+    #[test]
+    fn a_success_or_another_failure_starts_the_backoff_over() {
+        let throttled: BoxError = Throttled { retry_after: None }.into();
+        let other: BoxError = "connection reset".into();
+        let mut backoff = Backoff::default();
+        assert_eq!(backoff.after(&throttled, RETRY), RETRY);
+        assert_eq!(backoff.after(&throttled, RETRY), RETRY * 2);
+        assert_eq!(backoff.after(&other, RETRY), RETRY);
+        assert_eq!(backoff.after(&throttled, RETRY), RETRY);
+        backoff.after(&throttled, RETRY);
+        backoff.reset();
+        assert_eq!(backoff.after(&throttled, RETRY), RETRY);
     }
 }

@@ -1,6 +1,8 @@
 <script lang="ts">
 	// Catalog types of the row's category that can spawn in this system, narrowed to the
-	// linked target's class once linked. An unmatched raw scanner name shows muted.
+	// linked target's class once linked. An unmatched raw scanner name shows muted. When a
+	// search finds nothing here it looks at the rest of the catalog, since the spawn data
+	// lags the game.
 	import type { MappedSystem } from '$lib/map/system';
 	import type { Signature } from '$lib/api/types/Signature';
 	import type { SignatureCatalog } from '$lib/api/types/SignatureCatalog';
@@ -8,8 +10,10 @@
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import * as Command from '$lib/components/ui/command';
 	import * as Popover from '$lib/components/ui/popover';
+	import { triggerClasses } from '$lib/components/ui/select';
+	import { cn } from '$lib/utils';
 	import { matchesTypeQuery } from '$lib/signatures/type-search';
-	import { destClassMeta } from '$lib/map/classes';
+	import { destClassMeta, destIncludes } from '$lib/map/classes';
 	import { categoryMeta, typeById, typesForCategory } from '$lib/map/signatures';
 
 	let {
@@ -37,8 +41,15 @@
 
 	const available = $derived.by(() => {
 		if (categoryId === null) return [];
-		const all = typesForCategory(catalog, categoryId, system.wormhole_class_id);
-		return linkedClass === null ? all : all.filter((t) => t.target_class === linkedClass);
+		const all = typesForCategory(catalog, categoryId, {
+			systemId: system.solar_system_id,
+			classId: system.wormhole_class_id,
+			regionId: system.region_id,
+			constellationId: system.constellation_id,
+		});
+		return linkedClass === null
+			? all
+			: all.filter((t) => t.target_class !== null && destIncludes(t.target_class, linkedClass));
 	});
 
 	// A static's code can also be scanned outbound, so statics come first, then K162, then
@@ -74,6 +85,19 @@
 			.filter((section) => section.types.length > 0),
 	);
 
+	/** Types the query matches that are not known to spawn here, offered when nothing here matches. */
+	const elsewhere = $derived.by(() => {
+		if (categoryId === null || shown.length > 0 || query.trim() === '') return [];
+		const here = new Set(available.map((t) => t.id));
+		return typesForCategory(catalog, categoryId, null).filter(
+			(t) =>
+				!here.has(t.id) &&
+				(linkedClass === null ||
+					(t.target_class !== null && destIncludes(t.target_class, linkedClass))) &&
+				matchesTypeQuery(t, query),
+		);
+	});
+
 	function pick(typeId: number | null) {
 		onpick(typeId);
 		open = false;
@@ -97,21 +121,23 @@
 {/snippet}
 
 <Popover.Root bind:open>
+	<!-- Dressed as a select so the row's three pickers look alike. -->
 	<Popover.Trigger
 		disabled={!canWrite || categoryId === null}
-		class="flex w-full min-w-0 items-center justify-between gap-1 overflow-hidden rounded-md border
-			border-input bg-transparent px-2 text-xs shadow-xs disabled:cursor-not-allowed
-			disabled:opacity-50 {compact ? 'h-5 py-0' : 'h-6'}"
+		data-size="default"
+		class={cn(triggerClasses, 'w-full min-w-0 overflow-hidden text-xs', compact && '!h-5 !py-0')}
 		data-testid="sig-type"
 	>
-		{#if selected}
-			{@render typeLabel(selected)}
-		{:else if sig.name}
-			<span class="truncate text-muted-foreground">{sig.name}</span>
-		{:else}
-			<span class="text-muted-foreground">Type</span>
-		{/if}
-		<ChevronDownIcon class="size-3 shrink-0 opacity-50" />
+		<span class="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+			{#if selected}
+				{@render typeLabel(selected)}
+			{:else if sig.name}
+				<span class="truncate text-muted-foreground">{sig.name}</span>
+			{:else}
+				<span class="text-muted-foreground">Type</span>
+			{/if}
+		</span>
+		<ChevronDownIcon class="pointer-events-none size-3.5 shrink-0 text-muted-foreground" />
 	</Popover.Trigger>
 	<Popover.Content class="w-64 p-0" align="start">
 		<!-- The list filters itself, so the Command primitive must not filter it again on
@@ -130,7 +156,7 @@
 			<Command.List class="max-h-64">
 				<!-- Our own, because `shouldFilter={false}` means the primitive does not know
 				     what the query ruled out and so never reaches its own empty state. -->
-				{#if shown.length === 0}
+				{#if shown.length === 0 && elsewhere.length === 0}
 					<div class="py-4 text-center text-xs text-muted-foreground">No type matches</div>
 				{/if}
 				<Command.Group>
@@ -147,6 +173,15 @@
 						{/each}
 					</Command.Group>
 				{/each}
+				{#if elsewhere.length > 0}
+					<Command.Group heading="Not known to spawn here">
+						{#each elsewhere as t (t.id)}
+							<Command.Item value={String(t.id)} onSelect={() => pick(t.id)} class="text-xs">
+								{@render typeLabel(t)}
+							</Command.Item>
+						{/each}
+					</Command.Group>
+				{/if}
 			</Command.List>
 		</Command.Root>
 	</Popover.Content>

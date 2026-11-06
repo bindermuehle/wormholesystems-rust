@@ -8,6 +8,7 @@
 //! writing a killmail.
 
 use std::collections::HashSet;
+use std::hash::BuildHasher;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -65,7 +66,7 @@ pub async fn ensure(pool: &PgPool, esi: &EsiClient, kind: EntityKind, ids: &[i64
     let failed = Arc::new(AtomicUsize::new(0));
     run_bounded(&missing, CONCURRENCY, |id| {
         let (pool, esi) = (pool.clone(), esi.clone());
-        let (noted, named, failed) = (noted.clone(), named.clone(), failed.clone());
+        let (noted, named, failed) = (Arc::clone(&noted), Arc::clone(&named), Arc::clone(&failed));
         async move {
             match fetch(&pool, &esi, kind, id).await {
                 Fetched::Named => {
@@ -91,16 +92,20 @@ pub async fn ensure(pool: &PgPool, esi: &EsiClient, kind: EntityKind, ids: &[i64
 
 /// The subset of `ids` we cannot name, or last named too long ago, minus the ones ESI
 /// recently said do not exist.
-pub async fn unresolved(pool: &PgPool, kind: EntityKind, ids: &HashSet<i64>) -> Vec<i64> {
+pub async fn unresolved<S: BuildHasher>(
+    pool: &PgPool,
+    kind: EntityKind,
+    ids: &HashSet<i64, S>,
+) -> Vec<i64> {
     unresolved_and_noted(pool, kind, ids).await.0
 }
 
 /// [`unresolved`], along with the ones among them noted as unresolvable long enough ago to
 /// be asked about again, which are the only ones a successful fetch has a note to clear for.
-async fn unresolved_and_noted(
+async fn unresolved_and_noted<S: BuildHasher>(
     pool: &PgPool,
     kind: EntityKind,
-    ids: &HashSet<i64>,
+    ids: &HashSet<i64, S>,
 ) -> (Vec<i64>, HashSet<i64>) {
     let ids: Vec<i64> = ids.iter().copied().collect();
     let notes = sqlx::query!(
@@ -171,7 +176,7 @@ async fn unresolved_and_noted(
 
 /// Remember that ESI has no such thing, so the next pass does not ask again.
 async fn note_unresolvable(pool: &PgPool, kind: EntityKind, id: i64) {
-    let _ = sqlx::query!(
+    let noted = sqlx::query!(
         "insert into unresolvable_entities (kind, id) values ($1, $2)
          on conflict (kind, id) do update set noted_at = now()",
         kind.as_str(),
@@ -179,17 +184,29 @@ async fn note_unresolvable(pool: &PgPool, kind: EntityKind, id: i64) {
     )
     .execute(pool)
     .await;
+    if let Err(err) = noted {
+        tracing::error!(
+            "entities: could not note {} {id} as unresolvable: {err}",
+            kind.as_str()
+        );
+    }
 }
 
 /// The ids are back: whatever we noted about them no longer holds.
 async fn forget_unresolvable(pool: &PgPool, kind: EntityKind, ids: &[i64]) {
-    let _ = sqlx::query!(
+    let forgotten = sqlx::query!(
         "delete from unresolvable_entities where kind = $1 and id = any($2)",
         kind.as_str(),
         ids,
     )
     .execute(pool)
     .await;
+    if let Err(err) = forgotten {
+        tracing::error!(
+            "entities: could not clear the unresolvable {} notes: {err}",
+            kind.as_str()
+        );
+    }
 }
 
 /// Whether a failed fetch is ESI saying the id does not exist, rather than ESI being
@@ -217,17 +234,17 @@ pub async fn ensure_character_names(pool: &PgPool, esi: &EsiClient, ids: &[i64])
             // One id ESI does not know fails the whole call. Halving finds it in about ten
             // more calls, rather than costing the other 999 their names.
             Err(err) if is_not_found(&err) => {
-                match batch {
-                    [id] => note_unresolvable(pool, EntityKind::Character, *id).await,
-                    _ => {
-                        let (a, b) = batch.split_at(batch.len() / 2);
-                        batches.push(a);
-                        batches.push(b);
-                    }
+                if let [id] = batch {
+                    note_unresolvable(pool, EntityKind::Character, *id).await;
+                } else {
+                    let (a, b) = batch.split_at(batch.len() / 2);
+                    batches.push(a);
+                    batches.push(b);
                 }
                 continue;
             }
-            Err(_) => {
+            Err(err) => {
+                tracing::warn!("entities: could not name {} characters: {err}", batch.len());
                 outcome.failed += batch.len();
                 continue;
             }
@@ -252,8 +269,15 @@ pub async fn ensure_character_names(pool: &PgPool, esi: &EsiClient, ids: &[i64])
         .execute(pool)
         .await;
         match written {
-            Ok(done) => outcome.named += done.rows_affected() as usize,
-            Err(_) => {
+            Ok(done) => {
+                outcome.named += usize::try_from(done.rows_affected())
+                    .expect("a batch's row count fits in usize");
+            }
+            Err(err) => {
+                tracing::error!(
+                    "entities: could not store {} character names: {err}",
+                    ids.len()
+                );
                 outcome.failed += ids.len();
                 continue;
             }
@@ -281,6 +305,7 @@ impl Fetched {
             note_unresolvable(pool, kind, id).await;
             Fetched::Gone
         } else {
+            tracing::warn!("entities: could not fetch {} {id}: {err}", kind.as_str());
             Fetched::Failed
         }
     }
@@ -321,7 +346,10 @@ async fn fetch_character(pool: &PgPool, esi: &EsiClient, id: i64) -> Fetched {
     .await;
     match written {
         Ok(_) => Fetched::Named,
-        Err(_) => Fetched::Failed,
+        Err(err) => {
+            tracing::error!("entities: could not store character {id}: {err}");
+            Fetched::Failed
+        }
     }
 }
 
@@ -348,7 +376,10 @@ async fn fetch_corporation(pool: &PgPool, esi: &EsiClient, id: i64) -> Fetched {
     .await;
     match written {
         Ok(_) => Fetched::Named,
-        Err(_) => Fetched::Failed,
+        Err(err) => {
+            tracing::error!("entities: could not store corporation {id}: {err}");
+            Fetched::Failed
+        }
     }
 }
 
@@ -381,7 +412,10 @@ async fn fetch_alliance(pool: &PgPool, esi: &EsiClient, id: i64) -> Fetched {
     .await;
     match written {
         Ok(_) => Fetched::Named,
-        Err(_) => Fetched::Failed,
+        Err(err) => {
+            tracing::error!("entities: could not store alliance {id}: {err}");
+            Fetched::Failed
+        }
     }
 }
 

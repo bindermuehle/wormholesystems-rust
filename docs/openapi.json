@@ -56,6 +56,41 @@
         ]
       }
     },
+    "/api/desktop/heartbeat": {
+      "post": {
+        "tags": [
+          "tracking"
+        ],
+        "summary": "`POST /api/desktop/heartbeat`, a desktop app saying which characters it maps jumps for,\nso the website leaves those to it. Sent every 30 seconds, and once with `active: false`\nwhen it stops.",
+        "operationId": "desktop_heartbeat",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DesktopHeartbeat"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Done; the body is `null`"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/effects": {
       "get": {
         "tags": [
@@ -1854,6 +1889,76 @@
         ]
       }
     },
+    "/api/maps/{id}/connections/{connection_id}/bookmarks": {
+      "get": {
+        "tags": [
+          "naming"
+        ],
+        "summary": "`GET /api/maps/{id}/connections/{connection_id}/bookmarks`: the bookmark for each end.",
+        "operationId": "connection_bookmarks",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The map",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "connection_id",
+            "in": "path",
+            "description": "The connection",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "share",
+            "in": "query",
+            "description": "A share token, for reading a map that was opened with a link rather than a grant.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EndBookmark"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/maps/{id}/events": {
       "get": {
         "tags": [
@@ -2447,6 +2552,160 @@
                   "items": {
                     "$ref": "#/components/schemas/MapKillmail"
                   }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/maps/{id}/naming/alias": {
+      "get": {
+        "tags": [
+          "naming"
+        ],
+        "summary": "`GET /api/maps/{id}/naming/alias`: the alias for a system reached from `origin`.",
+        "operationId": "suggest_alias",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The map",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "description": "The placement the system is reached from.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "target_system",
+            "in": "query",
+            "description": "The solar system reached, when it is known.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "target_class",
+            "in": "query",
+            "description": "The class it leads to, when only that is known (a typed hole not yet flown).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "share",
+            "in": "query",
+            "description": "A share token, for reading a map that was opened with a link rather than a grant.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AliasSuggestion"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/maps/{id}/naming/bookmark": {
+      "post": {
+        "tags": [
+          "naming"
+        ],
+        "summary": "`POST /api/maps/{id}/naming/bookmark`: the bookmark name for a hole. A read, posted only\nbecause the question has more to it than fits a query string.",
+        "operationId": "name_bookmark",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The map",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "share",
+            "in": "query",
+            "description": "A share token, for reading a map that was opened with a link rather than a grant.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameBookmark"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookmarkName"
                 }
               }
             }
@@ -5719,6 +5978,48 @@
         ]
       }
     },
+    "/api/naming/preview": {
+      "post": {
+        "tags": [
+          "naming"
+        ],
+        "summary": "`POST /api/naming/preview`: what a set of naming settings would produce, for the\nsettings page to show while they are being edited.",
+        "operationId": "preview_naming",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NamingUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NamingPreview"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/reference-counts": {
       "get": {
         "tags": [
@@ -5748,7 +6049,7 @@
         "tags": [
           "reference"
         ],
-        "summary": "`GET /api/routing-graph`. Static reference data: cacheable for a day.",
+        "summary": "`GET /api/routing-graph`. Static reference data, revalidated by ETag.",
         "operationId": "routing_graph",
         "responses": {
           "200": {
@@ -5878,7 +6179,7 @@
         "tags": [
           "signatures"
         ],
-        "summary": "`GET /api/signature-types`: the seeded signature catalog (categories + types with\nspawn areas). Reference data, so no actor/role check; cacheable for a day.",
+        "summary": "`GET /api/signature-types`: the seeded signature catalog (categories + types with\nspawn areas). Reference data, so no actor/role check; revalidated by ETag.",
         "operationId": "signature_catalog",
         "responses": {
           "200": {
@@ -6547,6 +6848,17 @@
           "echo"
         ]
       },
+      "AliasSuggestion": {
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Announcement": {
         "type": "object",
         "required": [
@@ -6682,6 +6994,24 @@
           "viewport"
         ]
       },
+      "BookmarkName": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "suggested_alias": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The alias the strategy suggested for a destination that had none."
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
       "CharacterIdBody": {
         "type": "object",
         "required": [
@@ -6711,6 +7041,14 @@
             "type": "integer",
             "format": "int64"
           },
+          "desktop_map_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The map a desktop app is mapping this character's jumps onto right now. The website\nleaves those jumps to it, so the two do not map the same one twice."
+          },
           "is_active": {
             "type": "boolean"
           },
@@ -6723,7 +7061,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The ESI permissions the app uses that this character has not granted, so the UI can\nsay which of them is why something does not work for it."
+            "description": "The required ESI permissions this character has not granted, so the UI can\nsay which of them is why something does not work for it."
           },
           "name": {
             "type": "string"
@@ -7041,6 +7379,33 @@
           }
         }
       },
+      "DesktopHeartbeat": {
+        "type": "object",
+        "description": "What the desktop app is doing, sent every [`HEARTBEAT`] and once more when it stops.",
+        "required": [
+          "map_id",
+          "characters",
+          "active"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "description": "`false` when it stops watching them: quit, signed out, tracking turned off."
+          },
+          "characters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The characters it is watching, by name: the game's logs know no ids. Names that are\nnot on the signed-in account are ignored."
+          },
+          "map_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The map it maps jumps onto."
+          }
+        }
+      },
       "DiscordAccount": {
         "type": "object",
         "description": "A linked account, as the frontend shows it.",
@@ -7109,6 +7474,24 @@
             "type": "string"
           },
           "value": {
+            "type": "string"
+          }
+        }
+      },
+      "EndBookmark": {
+        "type": "object",
+        "description": "The bookmark for one end of a connection, as it would be written in game.",
+        "required": [
+          "node",
+          "text"
+        ],
+        "properties": {
+          "node": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The end the bookmark leads to."
+          },
+          "text": {
             "type": "string"
           }
         }
@@ -7838,6 +8221,13 @@
           "corporation_ticker": {
             "type": "string"
           },
+          "docked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The station or structure, by name. `None` in a private structure nobody with the\nstructures permission has docked in yet."
+          },
           "is_docked": {
             "type": "boolean",
             "description": "Docked in a station or structure: on the map, but not on grid."
@@ -8563,6 +8953,7 @@
         "type": "object",
         "description": "How a map names its chain. Map-wide rather than per-user: an alias is written on the\nmap for everyone to read.",
         "required": [
+          "strategy",
           "alias_scheme",
           "ignored_alias",
           "bookmark_wormhole",
@@ -8572,7 +8963,7 @@
         "properties": {
           "alias_scheme": {
             "$ref": "#/components/schemas/AliasScheme",
-            "description": "`numeric` (`1`, `11`, `12`), `alphabetical` (`A`, `AB`, with `H/L/N/P` reserved\nfor k-space exits) or `echo` (`a5s`, `b4a`: a branch letter per link off home, the\ndestination's class, then a slot letter)."
+            "description": "`numeric` (`1`, `11`, `12`) or `alphabetical` (`A`, `AB`, with `H/L/N/P` reserved\nfor k-space exits)."
           },
           "bookmark_kspace": {
             "type": "string"
@@ -8586,6 +8977,10 @@
           "ignored_alias": {
             "type": "string",
             "description": "The alias that sits outside the chain, e.g. `HOME`."
+          },
+          "strategy": {
+            "$ref": "#/components/schemas/NamingStrategyKind",
+            "description": "The convention the rest of these settings feed."
           }
         }
       },
@@ -9198,6 +9593,204 @@
             "items": {
               "$ref": "#/components/schemas/SystemMove"
             }
+          }
+        }
+      },
+      "NameBookmark": {
+        "type": "object",
+        "description": "Ask for the bookmark name of a hole, made while standing in `near`.",
+        "required": [
+          "near"
+        ],
+        "properties": {
+          "alias": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The alias to name it by. Absent takes the destination's own, and failing that the\nstrategy's suggestion when `suggest_alias` is set; `null` names it without one."
+          },
+          "claim_alias": {
+            "type": "boolean",
+            "description": "Write a suggested alias onto the destination node in the same step, so a quick\nsecond bookmark sees it taken and gets the next one. Needs a signed-in member; for\nanyone else the suggestion is only named, not written."
+          },
+          "destination": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The node the hole leads to, when it is on the map (a ghost counts)."
+          },
+          "destination_system": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The solar system it leads to, when that is known but not on the map."
+          },
+          "mass_status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MassStatus"
+              }
+            ]
+          },
+          "near": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The placement the bookmark is made in."
+          },
+          "signature_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "signature_type_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The signature's type: the wormhole code, and the class it leads to while the far\nside is unknown."
+          },
+          "size": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WormholeSize"
+              }
+            ]
+          },
+          "suggest_alias": {
+            "type": "boolean"
+          },
+          "time_status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TimeStatus"
+              }
+            ]
+          }
+        }
+      },
+      "NamingDefaults": {
+        "type": "object",
+        "required": [
+          "wormhole",
+          "kspace",
+          "return",
+          "ignored_alias"
+        ],
+        "properties": {
+          "ignored_alias": {
+            "type": "string"
+          },
+          "kspace": {
+            "type": "string"
+          },
+          "return": {
+            "type": "string"
+          },
+          "wormhole": {
+            "type": "string"
+          }
+        }
+      },
+      "NamingPreview": {
+        "type": "object",
+        "description": "What the settings page shows while naming is being edited: the first aliases the strategy\nhands out, and each format rendered against a worked example.",
+        "required": [
+          "aliases",
+          "wormhole",
+          "kspace",
+          "return",
+          "tokens",
+          "defaults"
+        ],
+        "properties": {
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The first few aliases the map's strategy hands out, so switching strategy or\nscheme shows the difference."
+          },
+          "defaults": {
+            "$ref": "#/components/schemas/NamingDefaults",
+            "description": "What each blank setting falls back to, for the page's placeholders."
+          },
+          "kspace": {
+            "type": "string"
+          },
+          "return": {
+            "type": "string"
+          },
+          "tokens": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every token a format may use."
+          },
+          "wormhole": {
+            "type": "string"
+          }
+        }
+      },
+      "NamingStrategyKind": {
+        "type": "string",
+        "description": "Which naming convention a map follows; [`naming::strategy`] maps it to the code.\n`Chain` extends the parent's alias (`1`, `11`, `111`); `Siblings` numbers each\nsystem's holes afresh (`1`, `2`, and `1`, `2` again one further out).",
+        "enum": [
+          "chain",
+          "siblings"
+        ]
+      },
+      "NamingUpdate": {
+        "type": "object",
+        "description": "The naming form as a client saves it. The same as [`MapNaming`], except that a client\nthat predates the choice of strategy leaves it out, and that keeps the map's own rather\nthan switching it back to the chain.",
+        "required": [
+          "alias_scheme",
+          "ignored_alias",
+          "bookmark_wormhole",
+          "bookmark_kspace",
+          "bookmark_return"
+        ],
+        "properties": {
+          "alias_scheme": {
+            "$ref": "#/components/schemas/AliasScheme"
+          },
+          "bookmark_kspace": {
+            "type": "string"
+          },
+          "bookmark_return": {
+            "type": "string"
+          },
+          "bookmark_wormhole": {
+            "type": "string"
+          },
+          "ignored_alias": {
+            "type": "string"
+          },
+          "strategy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NamingStrategyKind"
+              }
+            ]
           }
         }
       },
@@ -9854,11 +10447,16 @@
         "description": "One ESI permission and whether the acting character has consented to it.",
         "required": [
           "scope",
-          "granted"
+          "granted",
+          "optional"
         ],
         "properties": {
           "granted": {
             "type": "boolean"
+          },
+          "optional": {
+            "type": "boolean",
+            "description": "Not asked for at sign-in, and never warned about when missing."
           },
           "scope": {
             "type": "string"
@@ -10410,6 +11008,17 @@
           "name": {
             "type": "string"
           },
+          "naming_strategy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NamingStrategyKind",
+                "description": "This app's naming convention. The legacy app has no such choice and writes none, so\na file without it keeps the chain."
+              }
+            ]
+          },
           "rally_solarsystem_id": {
             "type": [
               "integer",
@@ -10721,14 +11330,24 @@
       },
       "SignatureTypeInfo": {
         "type": "object",
-        "description": "A cosmic-signature type from the seeded catalog. `signature` is the wormhole code\n(wormhole types only); `target_class` its destination class; `spawn_areas` the system\nclasses this type can appear in.",
+        "description": "A cosmic-signature type from the seeded catalog. `signature` is the wormhole code\n(wormhole types only); `target_class` its destination class; `spawn_areas` the system\nclasses this type can appear in. `regions` and `constellations` narrow that in known\nspace: when either is non-empty, a known-space system must be in one of them. `systems`\nnames systems the type spawns in outright; where any type of a category names a system,\nonly those types of that category spawn there.",
         "required": [
           "id",
           "name",
           "signature_category_id",
-          "spawn_areas"
+          "spawn_areas",
+          "regions",
+          "constellations",
+          "systems"
         ],
         "properties": {
+          "constellations": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
           "extra": {
             "type": [
               "string",
@@ -10756,6 +11375,13 @@
           "name": {
             "type": "string"
           },
+          "regions": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
           "signature": {
             "type": [
               "string",
@@ -10778,6 +11404,13 @@
             "items": {
               "type": "integer",
               "format": "int32"
+            }
+          },
+          "systems": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
             }
           },
           "target_class": {
@@ -11623,7 +12256,7 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/MapNaming",
+                "$ref": "#/components/schemas/NamingUpdate",
                 "description": "All-or-nothing: the naming block is edited as one form."
               }
             ]
@@ -12154,6 +12787,10 @@
     {
       "name": "signatures",
       "description": "Scan results per system: pasting the probe scanner, editing single signatures, and linking a wormhole signature to the connection it turned out to be. The type catalogue for the pickers lives here too."
+    },
+    {
+      "name": "naming",
+      "description": "How a map names things: the alias a newly reached system gets and the bookmark names for its holes, both decided by the map's naming strategy so every client names alike."
     },
     {
       "name": "tracking",
