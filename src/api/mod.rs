@@ -13,6 +13,7 @@ pub mod access;
 pub mod alerts;
 pub mod background_image;
 pub mod connections;
+pub mod echo;
 pub mod eve_scout;
 pub mod extract;
 pub mod history;
@@ -331,6 +332,7 @@ fn areas() -> OpenApiRouter<AppState> {
         .merge(eve_scout::routes())
         .merge(maps::routes())
         .merge(naming::routes())
+        .merge(echo::routes())
         .merge(systems::routes())
         .merge(connections::routes())
         .merge(signatures::routes())

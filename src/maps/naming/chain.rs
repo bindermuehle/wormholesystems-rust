@@ -460,6 +460,7 @@ mod tests {
         let target = Target {
             class: Some(5),
             security: Some(-1.0),
+            signature: None,
         };
         assert_eq!(Chain.alias(&map, &origin, &target).as_deref(), Some("11"));
     }
@@ -471,6 +472,7 @@ mod tests {
         let target = Target {
             class: Some(7),
             security: Some(0.9),
+            signature: None,
         };
         assert_eq!(Chain.alias(&map, &origin, &target).as_deref(), Some("11"));
     }
@@ -482,6 +484,7 @@ mod tests {
         let target = Target {
             class: Some(7),
             security: Some(0.9),
+            signature: None,
         };
         assert_eq!(Chain.alias(&map, &origin, &target), None);
     }
@@ -494,6 +497,7 @@ mod tests {
         let highsec = Target {
             class: None,
             security: Some(0.9),
+            signature: None,
         };
         assert_eq!(Chain.alias(&map, &origin, &highsec).as_deref(), Some("AH1"));
         let unknown = Target::default();

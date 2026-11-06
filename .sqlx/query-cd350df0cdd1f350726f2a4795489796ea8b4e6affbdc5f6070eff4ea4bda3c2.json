@@ -12,7 +12,8 @@
             "kind": {
               "Enum": [
                 "numeric",
-                "alphabetical"
+                "alphabetical",
+                "echo"
               ]
             }
           }
@@ -33,7 +34,8 @@
             "kind": {
               "Enum": [
                 "chain",
-                "siblings"
+                "siblings",
+                "echo"
               ]
             }
           }

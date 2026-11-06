@@ -128,8 +128,6 @@ text_enum! {
     pub enum AliasScheme as "alias_scheme" {
         Numeric => "numeric",
         Alphabetical => "alphabetical",
-        /// `<branch><type><slot>`, e.g. `a5s`: ours, not upstream's.
-        Echo => "echo",
     }
 }
 
@@ -140,6 +138,8 @@ text_enum! {
     pub enum NamingStrategyKind as "naming_strategy" {
         Chain => "chain",
         Siblings => "siblings",
+        /// `<branch><type><slot>`, e.g. `a5s`: ours, not upstream's. See [`naming::echo`].
+        Echo => "echo",
     }
 }
 

@@ -89,7 +89,8 @@
             "kind": {
               "Enum": [
                 "chain",
-                "siblings"
+                "siblings",
+                "echo"
               ]
             }
           }
@@ -253,7 +254,8 @@
             "kind": {
               "Enum": [
                 "chain",
-                "siblings"
+                "siblings",
+                "echo"
               ]
             }
           }

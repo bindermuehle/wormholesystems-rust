@@ -8,6 +8,7 @@
 
 pub mod bookmark;
 pub mod chain;
+pub mod echo;
 pub mod siblings;
 
 use std::collections::hash_map::Entry;
@@ -49,6 +50,7 @@ pub fn strategy(settings: &MapNaming) -> &'static dyn NamingStrategy {
     match settings.strategy {
         NamingStrategyKind::Chain => &chain::Chain,
         NamingStrategyKind::Siblings => &siblings::Siblings,
+        NamingStrategyKind::Echo => &echo::Echo,
     }
 }
 
@@ -63,6 +65,8 @@ pub struct NamingMap {
     adjacent: HashMap<i64, Vec<i64>>,
     /// Worked out the first time a strategy asks.
     distances: OnceLock<HashMap<i64, u32>>,
+    /// What only the echo strategy reads; empty on every other map.
+    echo: echo::EchoFacts,
 }
 
 impl NamingMap {
@@ -80,7 +84,19 @@ impl NamingMap {
             index,
             adjacent,
             distances: OnceLock::new(),
+            echo: echo::EchoFacts::default(),
         }
+    }
+
+    /// The scans and statics the echo strategy names from.
+    #[must_use]
+    pub fn with_echo(mut self, facts: echo::EchoFacts) -> Self {
+        self.echo = facts;
+        self
+    }
+
+    pub fn echo(&self) -> &echo::EchoFacts {
+        &self.echo
     }
 
     pub fn nodes(&self) -> &[Node] {
@@ -204,6 +220,9 @@ pub struct Edge {
 pub struct Target {
     pub class: Option<i32>,
     pub security: Option<f64>,
+    /// The scan of the hole that leads there (`signatures.id`), when it is known. Only echo
+    /// reads it: home's static takes a slot of its own.
+    pub signature: Option<i64>,
 }
 
 /// The system a bookmark names, and its node when it is on the map.
@@ -285,7 +304,12 @@ async fn load(pool: &PgPool, _reader: Reader, map_id: i64) -> Result<NamingMap> 
     })
     .collect();
 
-    Ok(NamingMap::new(settings, nodes, connections))
+    let map = NamingMap::new(settings, nodes, connections);
+    if map.settings.strategy != NamingStrategyKind::Echo {
+        return Ok(map);
+    }
+    let facts = echo::load_facts(pool, map_id, &map).await?;
+    Ok(map.with_echo(facts))
 }
 
 /// A solar system that may not be on the map, as a bookmark describes it.
@@ -339,6 +363,10 @@ pub struct SuggestAlias {
     #[serde(default)]
     #[ts(optional)]
     pub target_class: Option<i32>,
+    /// The scan of the hole flown (`signatures.id`), when the jump says which one it was.
+    #[serde(default)]
+    #[ts(optional)]
+    pub signature: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, ts_rs::TS, utoipa::ToSchema)]
@@ -362,11 +390,13 @@ pub async fn suggest_alias(
             Target {
                 class: system.wormhole_class_id,
                 security: system.security,
+                signature: cmd.signature,
             }
         }
         None => Target {
             class: cmd.target_class,
             security: None,
+            signature: cmd.signature,
         },
     };
     Ok(AliasSuggestion {
@@ -482,6 +512,10 @@ pub async fn name_bookmark(
             let target = Target {
                 class: system.wormhole_class_id,
                 security: system.security,
+                signature: near.system.as_ref().and_then(|s| {
+                    map.echo()
+                        .scan_in(s.solar_system_id, cmd.signature_id.as_deref()?)
+                }),
             };
             suggested_alias = strategy.alias(&map, near, &target);
             suggested_alias.clone()

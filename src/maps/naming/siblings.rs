@@ -100,8 +100,7 @@ pub fn next_sibling(taken: &[String], scheme: AliasScheme, kspace: Option<char>)
             .collect()
     };
     match (scheme, kspace) {
-        // `Echo` is on its way to being a strategy of its own; until then it numbers.
-        (AliasScheme::Numeric | AliasScheme::Echo, _) => lowest_free(&numbered("")).to_string(),
+        (AliasScheme::Numeric, _) => lowest_free(&numbered("")).to_string(),
         (AliasScheme::Alphabetical, Some(letter)) => {
             let prefix = letter.to_string();
             format!("{prefix}{}", lowest_free(&numbered(&prefix)))
@@ -197,6 +196,7 @@ mod tests {
         Target {
             class: Some(5),
             security: Some(-1.0),
+            signature: None,
         }
     }
 
@@ -252,6 +252,7 @@ mod tests {
         let highsec = Target {
             class: Some(7),
             security: Some(0.9),
+            signature: None,
         };
         assert_eq!(Siblings.alias(&map, map.node(7).unwrap(), &highsec), None);
     }

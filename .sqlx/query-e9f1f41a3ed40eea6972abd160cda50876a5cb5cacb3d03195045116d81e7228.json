@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select wormhole_code from wormhole_system_statics where solar_system_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "wormhole_code",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "wormhole_system_statics",
+            "name": "wormhole_code"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e9f1f41a3ed40eea6972abd160cda50876a5cb5cacb3d03195045116d81e7228"
+}

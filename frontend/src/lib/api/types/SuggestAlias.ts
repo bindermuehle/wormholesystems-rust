@@ -15,4 +15,8 @@ target_system?: number,
 /**
  * The class it leads to, when only that is known (a typed hole not yet flown).
  */
-target_class?: number, };
+target_class?: number, 
+/**
+ * The scan of the hole flown (`signatures.id`), when the jump says which one it was.
+ */
+signature?: number, };

@@ -5,4 +5,4 @@
  * `Chain` extends the parent's alias (`1`, `11`, `111`); `Siblings` numbers each
  * system's holes afresh (`1`, `2`, and `1`, `2` again one further out).
  */
-export type NamingStrategyKind = "chain" | "siblings";
+export type NamingStrategyKind = "chain" | "siblings" | "echo";
