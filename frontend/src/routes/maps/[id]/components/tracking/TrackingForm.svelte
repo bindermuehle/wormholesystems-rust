@@ -77,11 +77,14 @@
 			// slot and a wandering hole of the same class does not -- so ask again now
 			// that it is known. An untouched suggestion is replaced; a name typed by hand
 			// stays.
-			const again = tracker.suggestAliasForSignature(prompt, signature);
-			if (again && alias === (suggested ?? '')) {
-				alias = again;
-				suggested = again;
-			}
+			const untouched = suggested ?? '';
+			void tracker.suggestAliasForSignature(prompt, signature).then((again) => {
+				// Only if the pick still stands and nobody typed over the suggestion meanwhile.
+				if (again && chosen?.id === signature.id && alias === untouched) {
+					alias = again;
+					suggested = again;
+				}
+			});
 		}
 		if (signature.time_status && signature.time_status !== 'stable') time = signature.time_status;
 		if (signature.mass_status && signature.mass_status !== 'stable') mass = signature.mass_status;

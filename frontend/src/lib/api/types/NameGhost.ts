@@ -7,4 +7,9 @@ export type NameGhost = {
 /**
  * `signatures.id`.
  */
-signature: number, };
+signature: number, 
+/**
+ * The type just picked. The pick and this request go out together, so the server may
+ * not have saved the type yet; this says what it is.
+ */
+signature_type_id?: number, };

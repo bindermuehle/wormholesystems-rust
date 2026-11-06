@@ -78,8 +78,11 @@ export interface TrackerHost {
 		MapUserSettings,
 		'tracking_allowed' | 'prompt_for_signature' | 'suggest_alias' | 'tracked_character_ids'
 	> | null;
-	/** The alias the map's naming strategy gives a system reached from `origin`. */
-	suggestAlias(origin: number, targetSystem: number): Promise<string | null>;
+	/**
+	 * The alias the map's naming strategy gives a system reached from `origin`, through the
+	 * hole scanned as `signature` when that is known.
+	 */
+	suggestAlias(origin: number, targetSystem: number, signature?: number): Promise<string | null>;
 	/** The map's ignore list: a jump into one of these is flown, not mapped. */
 	ignored(): Set<number>;
 	stargates(): Map<number, number[]> | null;
@@ -206,7 +209,10 @@ export class JumpTracker {
 			this.queued.push({ from: fromSystemId, to: toSystemId, pilot });
 			return;
 		}
-		const suggestedAlias = await this.suggestAliasFor(origin, toSystemId, existing);
+		// Before the pilot picks, the only unambiguous hole is a single likely candidate; the
+		// form asks again once they choose, since under echo that changes the name.
+		const likely = groups.likely.length === 1 ? groups.likely[0].id : undefined;
+		const suggestedAlias = await this.suggestAliasFor(origin, toSystemId, existing, likely);
 		// Another jump may have opened one while the server was asked.
 		if (this.prompt !== null) {
 			this.queued.push({ from: fromSystemId, to: toSystemId, pilot });
@@ -253,12 +259,23 @@ export class JumpTracker {
 		origin: MappedSystem,
 		targetSystem: number,
 		existing: MappedSystem | null,
+		signature?: number,
 	): Promise<string | null> {
 		// A system already on the map keeps the name the chain knows it by.
 		if (existing?.alias) return existing.alias;
 		if (!this.map.settings()?.suggest_alias) return null;
 		// A name is a nicety: the jump still goes on the map without one.
-		return this.map.suggestAlias(origin.id, targetSystem).catch(() => null);
+		return this.map.suggestAlias(origin.id, targetSystem, signature).catch(() => null);
+	}
+
+	/** Ask again once the pilot has said which hole the jump went through. */
+	suggestAliasForSignature(prompt: JumpPrompt, signature: Signature): Promise<string | null> {
+		return this.suggestAliasFor(
+			prompt.origin,
+			prompt.targetSolarSystemId,
+			prompt.existing,
+			signature.id,
+		);
 	}
 
 	/** The first free slot beside the system jumped from. */

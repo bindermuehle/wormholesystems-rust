@@ -64,6 +64,7 @@
 		systemById: new Map(DEMO_SYSTEMS.map((s) => [s.id, s])),
 		connectionById: new Map(DEMO_CONNECTIONS.map((c) => [c.id, c])),
 		sigs,
+		naming: null,
 	});
 
 	const counts = $derived.by(() => {

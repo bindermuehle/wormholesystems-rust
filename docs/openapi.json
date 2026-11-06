@@ -2623,6 +2623,16 @@
             }
           },
           {
+            "name": "signature",
+            "in": "query",
+            "description": "The scan of the hole flown (`signatures.id`), when the jump says which one it was.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
             "name": "share",
             "in": "query",
             "description": "A share token, for reading a map that was opened with a link rather than a grant.",
@@ -2706,6 +2716,142 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BookmarkName"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/maps/{id}/naming/echo/ghost": {
+      "post": {
+        "tags": [
+          "naming"
+        ],
+        "summary": "`POST /api/maps/{id}/naming/echo/ghost`: name the ghost a scan leads to, now that its\ntype says where, and write the name.",
+        "operationId": "name_ghost",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The map",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "share",
+            "in": "query",
+            "description": "A share token, for reading a map that was opened with a link rather than a grant.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameGhost"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NamedGhost"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/maps/{id}/naming/echo/rows/{system}": {
+      "get": {
+        "tags": [
+          "naming"
+        ],
+        "summary": "`GET /api/maps/{id}/naming/echo/rows/{system}`: the name of every wormhole row scanned\nin a system, for the signature list. Empty on a map that does not use echo.",
+        "operationId": "rows",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The map",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "system",
+            "in": "path",
+            "description": "The placement the rows were scanned in",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "share",
+            "in": "query",
+            "description": "A share token, for reading a map that was opened with a link rather than a grant.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EchoRowAlias"
+                  }
                 }
               }
             }
@@ -6844,8 +6990,7 @@
         "description": "How a chain names itself: the sequence an alias suggestion walks.",
         "enum": [
           "numeric",
-          "alphabetical",
-          "echo"
+          "alphabetical"
         ]
       },
       "AliasSuggestion": {
@@ -7455,6 +7600,35 @@
           "linking": {
             "type": "boolean",
             "description": "Whether an account can be linked at all: the OAuth half of the application."
+          }
+        }
+      },
+      "EchoRowAlias": {
+        "type": "object",
+        "description": "What the signature list shows for one wormhole row.",
+        "required": [
+          "signature",
+          "alias",
+          "homeward",
+          "settled"
+        ],
+        "properties": {
+          "alias": {
+            "type": "string",
+            "description": "The name, without the homeward marker."
+          },
+          "homeward": {
+            "type": "boolean",
+            "description": "This hole is the way back toward home."
+          },
+          "settled": {
+            "type": "boolean",
+            "description": "The far side is on the map and carries this name; otherwise it is a suggestion."
+          },
+          "signature": {
+            "type": "integer",
+            "format": "int64",
+            "description": "`signatures.id`."
           }
         }
       },
@@ -9684,6 +9858,40 @@
           }
         }
       },
+      "NameGhost": {
+        "type": "object",
+        "description": "Name the ghost a scan leads to, now that its type says where.",
+        "required": [
+          "signature"
+        ],
+        "properties": {
+          "signature": {
+            "type": "integer",
+            "format": "int64",
+            "description": "`signatures.id`."
+          },
+          "signature_type_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The type just picked. The pick and this request go out together, so the server may\nnot have saved the type yet; this says what it is."
+          }
+        }
+      },
+      "NamedGhost": {
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The name written, or `None` when nothing was."
+          }
+        }
+      },
       "NamingDefaults": {
         "type": "object",
         "required": [
@@ -9753,7 +9961,8 @@
         "description": "Which naming convention a map follows; [`naming::strategy`] maps it to the code.\n`Chain` extends the parent's alias (`1`, `11`, `111`); `Siblings` numbers each\nsystem's holes afresh (`1`, `2`, and `1`, `2` again one further out).",
         "enum": [
           "chain",
-          "siblings"
+          "siblings",
+          "echo"
         ]
       },
       "NamingUpdate": {

@@ -1,6 +1,9 @@
 import type { MapConnection } from '$lib/api/types/MapConnection';
 import { api } from '$lib/api/client';
 import type { BookmarkName } from '$lib/api/types/BookmarkName';
+import type { EchoRowAlias } from '$lib/api/types/EchoRowAlias';
+import type { MapNaming } from '$lib/api/types/MapNaming';
+import type { NamedGhost } from '$lib/api/types/NamedGhost';
 import type { NameBookmark } from '$lib/api/types/NameBookmark';
 import type { MapSystemView } from '$lib/api/types/MapSystemView';
 import type { Signature } from '$lib/api/types/Signature';
@@ -34,6 +37,12 @@ export interface SignatureContext {
 	 * Absent where there is no map on the server to ask, and then there is no button.
 	 */
 	nameBookmark?: (cmd: NameBookmark) => Promise<BookmarkName>;
+	/** The map's naming settings; the echo column shows only on an echo map. */
+	naming: MapNaming | null;
+	/** The echo name of every wormhole row in a placement. Absent with no server to ask. */
+	echoRows?: (system: number, signal?: AbortSignal) => Promise<EchoRowAlias[]>;
+	/** Name the ghost a scan leads to, now that its type says where. */
+	nameEchoGhost?: (signaturePk: number, signatureTypeId: number) => Promise<NamedGhost>;
 	/** Absent in a read-only rendering; with no actions nothing can be written. */
 	actions?: SignatureActions;
 }
@@ -44,21 +53,28 @@ export interface SignatureActions {
 	link(signaturePk: number, connectionId: number): void;
 	unlink(signaturePk: number): void;
 	setPreserveMass(connectionId: number, preserve: boolean): void;
+	/** Name a placement from the echo column. */
+	setAlias(system: MapSystemView, alias: string): void;
 }
 
 /** The map's domain namespaces, narrowed to what the signature rows use. */
 interface SignatureHost {
 	readonly mapId: number;
+	readonly naming: MapNaming | null;
 	systems: {
 		readonly all: MapSystemView[];
 		readonly byId: ReadonlyMap<number, MapSystemView>;
+		rename(system: MapSystemView, alias: string | null, occupier: string | null): void;
 	};
 	connections: {
 		readonly all: MapConnection[];
 		readonly byId: ReadonlyMap<number, MapConnection>;
 		patch(connectionId: number, patch: { preserve_mass: boolean }): void;
 	};
-	signatures: { readonly all: Signature[] } & Omit<SignatureActions, 'setPreserveMass'>;
+	signatures: { readonly all: Signature[] } & Omit<
+		SignatureActions,
+		'setPreserveMass' | 'setAlias'
+	>;
 }
 
 /**
@@ -84,6 +100,12 @@ export function makeSignatureContext(map: SignatureHost): SignatureContext {
 			return map.signatures.all;
 		},
 		nameBookmark: (cmd) => api.nameBookmark(map.mapId, cmd),
+		get naming() {
+			return map.naming;
+		},
+		echoRows: (system, signal) => api.echoRows(map.mapId, system, signal),
+		nameEchoGhost: (signaturePk, signatureTypeId) =>
+			api.nameEchoGhost(map.mapId, { signature: signaturePk, signature_type_id: signatureTypeId }),
 		actions: {
 			update: (signaturePk, patch) => map.signatures.update(signaturePk, patch),
 			remove: (signaturePk) => map.signatures.remove(signaturePk),
@@ -91,6 +113,9 @@ export function makeSignatureContext(map: SignatureHost): SignatureContext {
 			unlink: (signaturePk) => map.signatures.unlink(signaturePk),
 			setPreserveMass: (connectionId, preserve) =>
 				map.connections.patch(connectionId, { preserve_mass: preserve }),
+			// A ghost owns only its alias; a real system keeps its occupier as it is.
+			setAlias: (system, alias) =>
+				map.systems.rename(system, alias, system.kind === 'system' ? system.occupying_group : null),
 		},
 	};
 }

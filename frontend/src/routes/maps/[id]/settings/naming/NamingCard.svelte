@@ -31,7 +31,7 @@
 	const buffer = draftOf(() => naming);
 	const dirty = $derived(buffer.dirty);
 
-	const STRATEGIES = ['chain', 'siblings'] as const satisfies readonly NamingStrategyKind[];
+	const STRATEGIES = ['chain', 'siblings', 'echo'] as const satisfies readonly NamingStrategyKind[];
 	const ALIAS_SCHEMES = ['numeric', 'alphabetical'] as const satisfies readonly AliasScheme[];
 	const scheme = $derived(buffer.value.alias_scheme);
 
@@ -90,9 +90,16 @@
 				>
 					<ToggleGroup.Item value="chain">Chain</ToggleGroup.Item>
 					<ToggleGroup.Item value="siblings">Per system</ToggleGroup.Item>
+					<ToggleGroup.Item value="echo">Echo</ToggleGroup.Item>
 				</ToggleGroup.Root>
 				<Field.FieldDescription>
-					{#if buffer.value.strategy === 'siblings'}
+					{#if buffer.value.strategy === 'echo'}
+						A branch letter per hole off home, then the destination's class, then a slot letter:
+						<span class="font-mono" data-testid="echo-preview"
+							>{preview?.aliases.join(', ') ?? ''}</span
+						>. Home's own static always takes <span class="font-mono">s</span>, and the signature
+						list shows each hole's name. Set a home system.
+					{:else if buffer.value.strategy === 'siblings'}
 						Each system numbers its own holes, so one further out starts again. The map, not the
 						alias, says which way home is, so set a home system.
 					{:else}
@@ -101,31 +108,34 @@
 				</Field.FieldDescription>
 			</Field.Field>
 
-			<Field.Field>
-				<Field.FieldLabel>Alias scheme</Field.FieldLabel>
-				<ToggleGroup.Root
-					type="single"
-					variant="outline"
-					value={buffer.value.alias_scheme}
-					{disabled}
-					onValueChange={(value) => {
-						const picked = oneOf(ALIAS_SCHEMES, value);
-						if (picked) buffer.value.alias_scheme = picked;
-					}}
-					data-testid="alias-scheme"
-				>
-					<ToggleGroup.Item value="numeric">Numeric</ToggleGroup.Item>
-					<ToggleGroup.Item value="alphabetical">Alphabetical</ToggleGroup.Item>
-				</ToggleGroup.Root>
-				<Field.FieldDescription>
-					Chains start <span class="font-mono" data-testid="alias-preview"
-						>{preview?.aliases.join(', ') ?? ''}</span
+			<!-- Echo spells its own names; the scheme would change nothing. -->
+			{#if buffer.value.strategy !== 'echo'}
+				<Field.Field>
+					<Field.FieldLabel>Alias scheme</Field.FieldLabel>
+					<ToggleGroup.Root
+						type="single"
+						variant="outline"
+						value={buffer.value.alias_scheme}
+						{disabled}
+						onValueChange={(value) => {
+							const picked = oneOf(ALIAS_SCHEMES, value);
+							if (picked) buffer.value.alias_scheme = picked;
+						}}
+						data-testid="alias-scheme"
 					>
-					{#if scheme === 'alphabetical'}
-						. H, L, N and P are reserved for exits to known space.
-					{/if}
-				</Field.FieldDescription>
-			</Field.Field>
+						<ToggleGroup.Item value="numeric">Numeric</ToggleGroup.Item>
+						<ToggleGroup.Item value="alphabetical">Alphabetical</ToggleGroup.Item>
+					</ToggleGroup.Root>
+					<Field.FieldDescription>
+						Chains start <span class="font-mono" data-testid="alias-preview"
+							>{preview?.aliases.join(', ') ?? ''}</span
+						>
+						{#if scheme === 'alphabetical'}
+							. H, L, N and P are reserved for exits to known space.
+						{/if}
+					</Field.FieldDescription>
+				</Field.Field>
+			{/if}
 
 			<Field.Field>
 				<Field.FieldLabel for="ignored-alias">Home alias</Field.FieldLabel>

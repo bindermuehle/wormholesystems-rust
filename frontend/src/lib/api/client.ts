@@ -6,6 +6,9 @@ import type { BookmarkName } from './types/BookmarkName';
 import type { NamingPreview } from './types/NamingPreview';
 import type { EndBookmark } from './types/EndBookmark';
 import type { NameBookmark } from './types/NameBookmark';
+import type { EchoRowAlias } from './types/EchoRowAlias';
+import type { NameGhost } from './types/NameGhost';
+import type { NamedGhost } from './types/NamedGhost';
 import type { NamingUpdate } from './types/NamingUpdate';
 import type { SuggestAlias } from './types/SuggestAlias';
 import type { AddConnectionJump } from './types/AddConnectionJump';
@@ -317,6 +320,10 @@ export function createApi(
 		connectionBookmarks: (mapId: number, connectionId: number, signal?: AbortSignal) =>
 			get<EndBookmark[]>(`/api/maps/${mapId}/connections/${connectionId}/bookmarks`, signal),
 		previewNaming: (naming: NamingUpdate) => post<NamingPreview>('/api/naming/preview', naming),
+		echoRows: (mapId: number, system: number, signal?: AbortSignal) =>
+			get<EchoRowAlias[]>(`/api/maps/${mapId}/naming/echo/rows/${system}`, signal),
+		nameEchoGhost: (mapId: number, cmd: NameGhost) =>
+			post<NamedGhost>(`/api/maps/${mapId}/naming/echo/ghost`, cmd),
 
 		// Connections
 		addConnection: (cmd: AddConnection) =>

@@ -20,9 +20,7 @@
 	import { LIFETIME_OPTIONS, SIGNATURE_MASS_OPTIONS } from '$lib/map/connection-status';
 	import { CATEGORIES, categoryMeta } from '$lib/map/signatures';
 	import type { SignatureContext, SignaturePatch } from '$lib/map/signature-context';
-	import { echoContextFor, type ScannedHole } from '$lib/naming/echo-context';
-	import { isGeneratedAlias } from '$lib/naming/echo';
-	import type { RowAlias } from '$lib/naming/echo-suggestions';
+	import type { EchoRowAlias } from '$lib/api/types/EchoRowAlias';
 	import ConnectionInput from './signature-row/ConnectionInput.svelte';
 	import TimeDetails from './signature-row/TimeDetails.svelte';
 	import TypeInput from './signature-row/TypeInput.svelte';
@@ -55,7 +53,7 @@
 		 * suggestion takes a slot the next one must not reuse. Null off the echo scheme,
 		 * which leaves the column out.
 		 */
-		rowAlias?: RowAlias | null;
+		rowAlias?: EchoRowAlias | null;
 		/**
 		 * Whether the list is showing the column at all. Separate from `rowAlias` so a row
 		 * with no name still holds the width and the columns line up.
@@ -96,53 +94,17 @@
 	/**
 	 * Name the hole's ghost as soon as picking a type says what it leads to.
 	 *
-	 * The scheme names a destination by its class, so until the type is picked there is
+	 * The strategy names a destination by its class, so until the type is picked there is
 	 * nothing to say. That pick is also the right moment to write: it is one person doing
 	 * one thing, where naming from the suggestion as it renders would have every client
-	 * with the map open writing the same names at once.
-	 *
-	 * Only an unnamed ghost is touched. Renaming one that already has a name would undo
-	 * whatever the scout called it, and a class that changes under an existing name is
-	 * their call to make, not ours.
+	 * with the map open writing the same names at once. The server leaves a name somebody
+	 * typed alone.
 	 */
 	function nameGhost(typeId: number | null) {
-		if (!showAlias || !canWrite) return;
-		const target = linkedTarget;
-		if (!target) return;
-
-		// A name we wrote is ours to correct; one somebody typed is not. There is no flag
-		// saying which is which, so the shape decides: `<branch><type><slot>` is what this
-		// scheme generates, and anything else was meant.
-		const existing = (target.alias ?? '').trim();
-		if (existing && !isGeneratedAlias(existing)) return;
-
-		const targetClassId = typeById(catalog, typeId)?.target_class ?? null;
-		if (targetClassId === null) return;
-
-		// Everything but this hole. Its own name is not taken by anything else, and its own
-		// branch letter is not a branch already spoken for: a C6 retyped to another C6 must
-		// keep `c6a` rather than read its own name as a reason to move to `d`.
-		const others = ctx.systems.filter((s) => s.id !== target.id);
-
-		const alias = suggestAlias({
-			parentAlias: system.alias,
-			targetIsWormhole: isWormholeClass(targetClassId),
-			originIsWormhole: isWormholeClass(system.wormhole_class_id),
-			aliases: others.map((s) => s.alias).filter((a): a is string => Boolean(a)),
-			scheme: ctx.naming?.alias_scheme,
-			ignoredAlias: ctx.naming?.ignored_alias,
-			echo: echoContextFor({
-				systems: others,
-				connections: ctx.connections,
-				originSystemId: system.id,
-				targetClassId,
-				hole: { ...asHole(sig), code: typeById(catalog, typeId)?.signature ?? null },
-				holesInOrigin: ctx.sigs
-					.filter((other) => other.solar_system_id === sig.solar_system_id)
-					.map(asHole),
-			}),
+		if (!showAlias || !canWrite || typeId === null || !linkedTarget) return;
+		ctx.nameEchoGhost?.(sig.id, typeId).catch(() => {
+			toast.error('Could not name the hole');
 		});
-		if (alias && alias !== existing) ctx.actions?.setAlias(target, alias);
 	}
 
 	let editingAlias = $state(false);

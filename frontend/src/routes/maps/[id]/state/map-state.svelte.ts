@@ -470,8 +470,14 @@ export class MapState {
 			sigs: () => this.signatures.all,
 			grid: () => this.grid,
 			settings: () => this.userSettings,
-			suggestAlias: (origin, targetSystem) =>
-				api.suggestAlias(this.mapId, { origin, target_system: targetSystem }).then((s) => s.alias),
+			suggestAlias: (origin, targetSystem, signature) =>
+				api
+					.suggestAlias(this.mapId, {
+						origin,
+						target_system: targetSystem,
+						...(signature === undefined ? {} : { signature }),
+					})
+					.then((s) => s.alias),
 			ignored: () => this.ignoredIds,
 			stargates: () => this.route.stargates,
 			whenRoutingLoaded: () => this.route.whenLoaded(),

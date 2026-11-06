@@ -27,7 +27,9 @@ use sqlx::PgPool;
 
 use super::bookmark::Hole;
 use super::siblings::Siblings;
-use super::{CLAIMS, Destination, NamingMap, NamingStrategy, Node, Target, load};
+use super::{
+    CLAIMS, Destination, NamingMap, NamingStrategy, Node, Target, load, signature_type,
+};
 use crate::maps::access::Reader;
 use crate::maps::error::{MapError, Result};
 use crate::maps::map::MapNaming;
@@ -395,6 +397,11 @@ fn row_aliases(map: &NamingMap, origin: &Node) -> Vec<EchoRowAlias> {
 pub struct NameGhost {
     /// `signatures.id`.
     pub signature: i64,
+    /// The type just picked. The pick and this request go out together, so the server may
+    /// not have saved the type yet; this says what it is.
+    #[serde(default)]
+    #[ts(optional)]
+    pub signature_type_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, ts_rs::TS, utoipa::ToSchema)]
@@ -418,9 +425,21 @@ pub async fn name_ghost(
     cmd: NameGhost,
 ) -> Result<NamedGhost> {
     let _claiming = CLAIMS.lock().await;
-    let map = load(pool, reader, map_id).await?;
+    let mut map = load(pool, reader, map_id).await?;
     if map.settings.strategy != NamingStrategyKind::Echo {
         return Ok(NamedGhost { alias: None });
+    }
+    if let Some(type_id) = cmd.signature_type_id {
+        let (code, class) = signature_type(pool, Some(type_id)).await?;
+        let mut facts = map.echo().clone();
+        let picked = facts
+            .scans
+            .iter_mut()
+            .find(|s| s.pk == cmd.signature)
+            .ok_or(MapError::NotFound)?;
+        picked.code = code;
+        picked.target_class = class;
+        map = map.with_echo(facts);
     }
     let scan = map.echo().scan(cmd.signature).ok_or(MapError::NotFound)?;
     let Some(origin) = map.node_of_system(scan.solar_system_id) else {

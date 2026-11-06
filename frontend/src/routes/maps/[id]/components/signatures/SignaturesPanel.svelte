@@ -22,7 +22,7 @@
 	import type { PastedSignature } from '$lib/api/types/PastedSignature';
 	import type { Signature } from '$lib/api/types/Signature';
 	import type { UpdateMapUserSettings } from '$lib/api/types/UpdateMapUserSettings';
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createQuery, keepPreviousData } from '@tanstack/svelte-query';
 
 	import { q } from '$lib/api/queries';
 	import { Button } from '$lib/components/ui/button';
@@ -48,7 +48,7 @@
 	import { deletedByPaste, pasteStatus } from '$lib/signatures/paste-diff';
 	import SignatureColumns, { SORT_COLUMNS } from '$lib/components/SignatureColumns.svelte';
 	import SignatureRow from '$lib/components/SignatureRow.svelte';
-	import { echoSuggestions, type RowAlias } from '$lib/naming/echo-suggestions';
+	import type { EchoRowAlias } from '$lib/api/types/EchoRowAlias';
 	import SignaturesPastedAt from './SignaturesPastedAt.svelte';
 	import { solarSystemId, systemName } from '$lib/map/system';
 
@@ -74,25 +74,35 @@
 	const systemId = $derived(solarSystemId(system));
 	const canWrite = $derived(map.canWrite && systemId !== null);
 
-	// The echo scheme names every hole after what it leads to, so the list shows the name.
-	// The other two name a system when it is placed, and have nothing to say about a hole
+	// The echo strategy names every hole after what it leads to, so the list shows the name.
+	// The others name a system when it is placed, and have nothing to say about a hole
 	// nobody has flown, so the column stays off and those maps keep the layout they had.
-	const showAlias = $derived(map.naming?.alias_scheme === 'echo');
+	const showAlias = $derived(map.naming?.strategy === 'echo');
 
-	// Worked out for the whole list at once: each suggestion takes a slot the next one
-	// must not reuse, which a row deciding on its own cannot know.
-	const rowAliases = $derived.by(() => {
+	// The server works the names out for the whole list at once: each suggestion takes a
+	// slot the next one must not reuse, which a row deciding on its own cannot know. Asked
+	// again whenever a name, an edge or one of this system's scans changes.
+	const echoInputs = $derived(
+		showAlias
+			? JSON.stringify([
+					ctx.systems.map((s) => [s.id, s.alias]),
+					ctx.connections.map((c) => [c.id, c.from_system, c.to_system]),
+					ctx.sigs
+						.filter((sig) => sig.solar_system_id === systemId)
+						.map((sig) => [sig.id, sig.group, sig.signature_type_id, sig.connection_id]),
+				])
+			: '',
+	);
+	const echoQuery = createQuery(() => ({
+		queryKey: ['echo-rows', map.mapId, system.id, echoInputs],
+		queryFn: ({ signal }) => ctx.echoRows!(system.id, signal),
 		// A ghost has nothing scanned in it, so there is nothing to name.
-		if (!showAlias || !catalog || systemId === null) return new Map<number, RowAlias>();
-		return echoSuggestions({
-			systems: ctx.systems,
-			connections: ctx.connections,
-			system,
-			sigs: ctx.sigs.filter((sig) => sig.solar_system_id === systemId),
-			catalog,
-			ignoredAlias: map.naming?.ignored_alias,
-		});
-	});
+		enabled: showAlias && systemId !== null && ctx.echoRows !== undefined,
+		placeholderData: keepPreviousData,
+	}));
+	const rowAliases = $derived(
+		new Map<number, EchoRowAlias>((echoQuery.data ?? []).map((row) => [row.signature, row])),
+	);
 	const compact = $derived(map.userSettings?.compact_signature_list ?? false);
 	const targetLabel = $derived.by(() => {
 		const name = systemName(system);
