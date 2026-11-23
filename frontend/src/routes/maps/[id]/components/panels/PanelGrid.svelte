@@ -15,6 +15,7 @@
 	import NavigationCard from './NavigationCard.svelte';
 	import CharactersCard from './CharactersCard.svelte';
 	import EveScoutCard from './EveScoutCard.svelte';
+	import StructuresCard from './StructuresCard.svelte';
 	import KillmailsCard from './KillmailsCard.svelte';
 	import NotesCard from './NotesCard.svelte';
 	import SkyhooksCard from './SkyhooksCard.svelte';
@@ -218,6 +219,8 @@
 				<KillmailsCard {map} />
 			{:else if item.i === 'evescout'}
 				<EveScoutCard {map} />
+			{:else if item.i === 'structures'}
+				<StructuresCard {map} />
 			{:else if item.i === 'notes'}
 				{#if map.activeSystem}
 					<NotesCard {map} system={map.activeSystem} />

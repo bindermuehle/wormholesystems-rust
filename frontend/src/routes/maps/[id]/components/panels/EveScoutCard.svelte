@@ -18,6 +18,7 @@
 	import SortHeader from '$lib/components/SortHeader.svelte';
 	import RouteOriginBadge from './RouteOriginBadge.svelte';
 	import SystemMenu from '../system-menu/SystemMenu.svelte';
+	import SystemMenuButton from '../system-menu/SystemMenuButton.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Tabs from '$lib/components/ui/tabs';
 	import * as Tooltip from '$lib/components/ui/tooltip';
@@ -184,21 +185,32 @@
 	</MapPanelHeader>
 
 	<MapPanelContent>
-		<div class="mt-1 flex flex-col">
+		<!-- One grid for the whole list, every row a subgrid, so the columns line up. Once the
+		     card is wide enough to draw routes, the text columns take what they need and the
+		     route column gets everything left over. The last
+		     track is `auto`, not the cell's width: a row's padding comes out of its edge tracks,
+		     and a fixed one would push its cell into the padding. -->
+		<div
+			class="mt-1 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_1rem_3.5rem_2.5rem_auto_auto_min-content] gap-x-2 @[36rem]/routes:grid-cols-[minmax(0,auto)_minmax(0,auto)_1rem_3.5rem_2.5rem_minmax(min-content,1fr)_auto_min-content] @[36rem]/routes:gap-x-4"
+		>
 			<div
-				class="flex items-center gap-2 px-3 pb-1 text-[10px] tracking-wider text-muted-foreground uppercase"
+				class="col-span-full grid grid-cols-subgrid items-center gap-x-2 @[36rem]/routes:gap-x-4 px-3 pb-1 text-[10px] tracking-wider text-muted-foreground uppercase"
 			>
 				{@render heading('system', 'System', 'min-w-0 flex-1')}
 				{@render heading('region', 'Region', 'min-w-0 flex-1')}
 				<span class="w-4 shrink-0"></span>
 				{@render heading('signature', 'Sig', 'w-14 shrink-0')}
 				{@render heading('type', 'WH', 'w-10 shrink-0')}
-				{@render heading('jumps', 'J', 'w-10 shrink-0 justify-end')}
+				{@render heading('jumps', 'J', 'justify-end')}
 				{@render heading('ttl', 'TTL', 'w-10 shrink-0 justify-end')}
+				<span></span>
 			</div>
 
 			{#if sorted.length === 0}
-				<p class="px-3 py-4 text-xs text-muted-foreground" data-testid="evescout-empty">
+				<p
+					class="col-span-full px-3 py-4 text-xs text-muted-foreground"
+					data-testid="evescout-empty"
+				>
 					{connections.length === 0
 						? 'No public connections reported right now.'
 						: `Nothing out of ${hub} right now.`}
@@ -209,7 +221,7 @@
 					{#snippet line()}
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
 						<div
-							class="flex items-center gap-2 border-b border-border/30 px-3 py-1 text-xs last:border-b-0 hover:bg-muted/30"
+							class="col-span-full grid grid-cols-subgrid items-center gap-x-2 @[36rem]/routes:gap-x-4 border-b border-border/30 px-3 py-1 text-xs last:border-b-0 hover:bg-muted/30"
 							data-testid="evescout-row"
 							data-system={row.system?.name ?? c.solar_system_id}
 							onmouseenter={() => hover(row, true)}
@@ -294,7 +306,7 @@
 								{c.wormhole_type ?? '---'}
 							</span>
 
-							<span class="w-10 shrink-0 text-right">
+							<span class="flex min-w-10 justify-end">
 								{#if row.route}
 									<RoutePopover {map} steps={row.route.route}>
 										<span
@@ -319,6 +331,11 @@
 							>
 								{ttl(c.remaining_hours)}
 							</span>
+							{#if row.system}
+								<SystemMenuButton name={row.system.name} />
+							{:else}
+								<span></span>
+							{/if}
 						</div>
 					{/snippet}
 

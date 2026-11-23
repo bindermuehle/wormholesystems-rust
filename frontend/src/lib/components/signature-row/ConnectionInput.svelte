@@ -1,6 +1,8 @@
 <script lang="ts">
 	// Links a signature to one of the system's connections. Unclaimed ones list first, and a
 	// typed signature filters to connections whose far end matches the type's destination.
+	// A connection another signature here already is cannot be this one too: two signatures
+	// are two holes. Picking it means a second hole to the same system, with its own edge.
 	import type { MapConnection } from '$lib/api/types/MapConnection';
 	import type { MapSystemView } from '$lib/api/types/MapSystemView';
 	import { systemName, type MappedSystem } from '$lib/map/system';
@@ -9,6 +11,7 @@
 	import * as Select from '$lib/components/ui/select';
 	import ClassBadge from '$lib/components/ClassBadge.svelte';
 	import { destIncludes } from '$lib/map/classes';
+	import { heuristicSize } from '$lib/map/mass';
 	import { typeById } from '$lib/map/signatures';
 	import type { SignatureContext } from '$lib/map/signature-context';
 
@@ -85,7 +88,21 @@
 		}
 		const connectionId = Number(value);
 		if (!Number.isFinite(connectionId) || connectionId === sig.connection_id) return;
-		ctx.actions?.link(sig.id, connectionId);
+		const far = connected.find((e) => e.conn.id === connectionId)?.target;
+		// Nobody knows where an unmapped hole leads, so there is no second one to draw to it.
+		if (far?.kind !== 'system') {
+			ctx.actions?.link(sig.id, connectionId);
+			return;
+		}
+		const own = sig.connection_id === null ? null : ctx.connectionById.get(sig.connection_id);
+		const ownFar = own ? target(own) : null;
+		ctx.actions?.linkBeside(sig.id, {
+			ghost: ownFar?.kind === 'ghost' ? ownFar.id : null,
+			from: system.id,
+			to: far.id,
+			solarSystemId: far.solar_system_id,
+			size: heuristicSize(ctx.systems, system.id, far.id),
+		});
 	}
 </script>
 
@@ -153,7 +170,9 @@
 		{#if connected.length > 0}
 			<Select.Separator />
 			<Select.Group>
-				<Select.GroupHeading class="text-xs text-muted-foreground">Connected</Select.GroupHeading>
+				<Select.GroupHeading class="text-xs text-muted-foreground"
+					>Another hole to</Select.GroupHeading
+				>
 				{#each connected as entry (entry.conn.id)}
 					<Select.Item
 						value={String(entry.conn.id)}

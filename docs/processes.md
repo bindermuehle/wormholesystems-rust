@@ -209,6 +209,51 @@ The signatures it was linked to are unlinked, not deleted; the
 [signature expiry](#see-also--other-periodic-work) collects them on its own schedule,
 since a wormhole signature that old is past its 3 day cutoff too.
 
+## Structure watch
+
+Reads what members share about their corporations' structures, for the structures card and
+the two structure alerts (`src/structure_watch.rs`). Unlike status polling it does not
+care whether anyone has the app open.
+
+**Who is read.** Every character of a user who turned on `structures_shared` for at least
+one map they still have a grant on (`map_structure_sharers`), is in a player corporation,
+and holds a token with one of the two optional scopes. The switch is per user per map and
+off by default: a grant on a map is given, not asked for, so without it anyone could add a
+corporation to their map and read its structures.
+
+**What is read, once a minute for whoever is due:**
+
+- **Structure list, hourly per character.** `GET /corporations/{id}/structures` replaces
+  `corporation_structures` for that corporation and stamps the character in
+  `corporation_structure_readers`. A 403 (no Station Manager role) removes the stamp and
+  the character is asked again in six hours.
+- **Notifications, every ten minutes per character** (ESI's cache). The ones about
+  structures become `structure_events`, one row per corporation however many of its
+  characters received it, with a `structure_event_receipts` row per recipient. The rest
+  are dropped unread. The characters of one corporation are read in turn, spread over the
+  ten minutes, so three sharing directors see an attack within about three.
+
+**Who sees it.** A map sees an event through a receipt of a sharing character, and a
+corporation's list through a sharing character in that corporation who read it in the last
+day. So a member shares only what their own character could read: one without the roles
+adds nothing, whatever a director of the same corporation shares elsewhere.
+
+**Invariants & expected behaviour**
+
+- Nothing is read for a user who shares with no map, and turning the switch off hides
+  everything that came through them at once. The rows stay until retention removes them.
+- Each change publishes `structures_changed` to the maps the character shares with.
+- Which events an alert speaks about is its own choice (`map_alerts.structure_events`);
+  null is the usual set for its kind, which leaves out the routine ones (anchoring, came
+  online, refuelled, services offline).
+- An event is offered to those maps' alerts the first time a character receives it, and
+  only if it is under two hours old, so the first read of a character does not replay
+  weeks of history into Discord. Claims keep a second recipient from repeating it.
+- After a list is read, each of those maps' fuel alerts is checked against it. The claim
+  is keyed by structure and by when its fuel runs out, so an alert fires once per refuel.
+- An event's key is corporation, type, subject and time, not ESI's notification id.
+- Skips a tick while Tranquility is down, like the other pollers.
+
 ## Discord alerts
 
 Evaluating an alert and sending its message are separate, so a slow or dead Discord
@@ -217,7 +262,8 @@ costs messages and never holds up anything else (`src/alerts/mod.rs`).
 - Evaluation decides which alerts fire and claims each occasion in
   `map_alert_deliveries` before anything is sent. Map changes are evaluated by a
   subscriber to every map's events (a placement for proximity and jump range, a wormhole
-  for proximity); killmails by a worker the ingest hands them to.
+  for proximity); killmails by a worker the ingest hands them to; structure events and
+  fuel timers by the [structure watch](#structure-watch) as it reads them.
 - The active alerts are cached in memory. Any change logged to `map_alert_events` (which
   every write to an alert or its destination is) invalidates the copy at once, and it is
   reloaded at least every minute regardless.
@@ -235,7 +281,9 @@ Once a day (`retention::sweep`), rows that only ever accumulate are dropped:
 
 | Table | Removed | Why that long |
 |---|---|---|
-| `map_alert_deliveries` | `killmail:` keys older than 30 days; `placement:` keys older than 30 days whose placement no longer exists | a delivery is the dedup record, so it stays while its occasion can recur; a killmail is only offered once |
+| `map_alert_deliveries` | `killmail:`, `structure_event:` and `fuel:` keys older than 30 days; `placement:` keys older than 30 days whose placement no longer exists | a delivery is the dedup record, so it stays while its occasion can recur; a killmail is only offered once |
+| `structure_events` | older than 30 days | the card shows a week |
+| `corporation_structures` | not listed for 7 days | nobody reads for that corporation any more |
 | `map_alert_events` | older than 90 days | the alert settings page shows the newest 50 to 200 |
 | `sessions` | past `expires_at` | already refused at the door |
 

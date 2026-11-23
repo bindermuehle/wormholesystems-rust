@@ -17,6 +17,12 @@ pub(crate) fn dest_includes(dest: i64, class: Option<i64>) -> bool {
     }
 }
 
+/// Classes 19 to 23 are abyssal deadspace and the other instanced pockets: a system to the
+/// game, but nowhere a wormhole leads, so never part of a chain.
+pub(crate) fn is_abyssal(class: Option<i64>) -> bool {
+    matches!(class, Some(19..=23))
+}
+
 /// Security the way the game shows it: 0.0 stays, anything in (0, 0.05) is 0.1, the rest
 /// rounds to the nearest tenth, halves away from zero.
 fn ccp_round_security(security: f64) -> f64 {

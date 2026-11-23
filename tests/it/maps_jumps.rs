@@ -286,6 +286,32 @@ async fn transit_capture_and_claiming() {
     assert_eq!(total, 2);
 }
 
+/// Abyssal space is a solar system to the location poll, so a filament out of a mapped
+/// system and the trip back both look like a hole nobody has mapped.
+#[tokio::test]
+async fn a_trip_into_abyssal_space_is_not_a_transit() {
+    let (pool, _db) = common::db::fresh().await;
+    let w = world(&pool).await;
+    allow_tracking(&pool, w.map_id, w.owner.user_id).await;
+    place(&pool, w.owner, w.map_id, SYS_A).await;
+    sqlx::query("update solar_systems set wormhole_class_id = 19 where id = $1")
+        .bind(SYS_C)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    for (from, to) in [(SYS_A, SYS_C), (SYS_C, SYS_A)] {
+        record_transit(&pool, w.owner.character_id, from, to)
+            .await
+            .unwrap();
+    }
+    let count: i64 = sqlx::query_scalar("select count(*) from map_connection_jumps")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
 /// One transit is judged map by map: a map where the pilot is only a viewer records
 /// nothing, and neither does one that has the pair mapped as a stargate.
 #[tokio::test]

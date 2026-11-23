@@ -14,7 +14,9 @@
 	import type { Rule } from '$lib/api/types/Rule';
 	import type { SaveAlert } from '$lib/api/types/SaveAlert';
 	import type { Side } from '$lib/api/types/Side';
+	import type { StructureEventKind } from '$lib/api/types/StructureEventKind';
 	import type { Subject } from '$lib/api/types/Subject';
+	import { defaultEvents, eventsOf } from '$lib/map/structures';
 	import {
 		ALERT_KINDS,
 		ALERT_MENTIONS,
@@ -22,6 +24,7 @@
 		JUMP_SHIPS,
 		RULE_SIDES,
 		RULE_SUBJECTS,
+		isStructureKind,
 		jumpRangeLy,
 	} from '$lib/alerts/vocabulary';
 	import { isValidAlert, parseIds, toSaveAlert, type AlertDraft } from './alert-form';
@@ -60,6 +63,27 @@
 	let maxJumps = $state(seed?.max_jumps ?? 5);
 	let shipType = $state<JumpShip>(seed?.ship_type ?? 'dreadnought');
 	let jdcLevel = $state(seed?.jdc_level ?? 5);
+	let fuelDays = $state(seed?.fuel_days ?? 3);
+	// One choice per alert kind, so switching the kind back and forth loses neither. A saved
+	// alert that never chose shows the usual set ticked, which is what it has been doing.
+	const seededEvents = (alertKind: 'structure_attack' | 'structure_fuel') =>
+		seed?.kind === alertKind && seed.structure_events.length > 0
+			? [...seed.structure_events]
+			: defaultEvents(alertKind);
+	let attackEvents = $state<StructureEventKind[]>(seededEvents('structure_attack'));
+	let fuelEvents = $state<StructureEventKind[]>(seededEvents('structure_fuel'));
+	const structureEvents = $derived(
+		kind === 'structure_attack' ? attackEvents : kind === 'structure_fuel' ? fuelEvents : [],
+	);
+	const eventChoices = $derived(
+		kind === 'structure_attack' || kind === 'structure_fuel' ? eventsOf(kind) : [],
+	);
+
+	function toggleEvent(event: StructureEventKind, on: boolean) {
+		const next = on ? [...structureEvents, event] : structureEvents.filter((e) => e !== event);
+		if (kind === 'structure_attack') attackEvents = next;
+		else fuelEvents = next;
+	}
 	let filters = $state<Rule[]>(seed ? structuredClone($state.snapshot(seed.filters)) : []);
 	let filterMatch = $state(seed?.filter_match ?? 'any');
 
@@ -122,6 +146,8 @@
 		maxJumps,
 		shipType,
 		jdcLevel,
+		fuelDays,
+		structureEvents,
 		filters,
 		filterMatch,
 	});
@@ -138,7 +164,7 @@
 		<Input
 			id="alert-name"
 			bind:value={name}
-			placeholder="Kills around home"
+			placeholder={isStructureKind(kind) ? 'Home defence' : 'Kills around home'}
 			data-testid="alert-name"
 		/>
 	</div>
@@ -160,7 +186,7 @@
 		<p class="text-xs text-muted-foreground">{ALERT_KINDS.find((k) => k.value === kind)?.blurb}</p>
 	</div>
 
-	{#if kind !== 'killmail'}
+	{#if kind === 'proximity' || kind === 'jump_range'}
 		<div class="flex flex-col gap-1.5">
 			<span class="text-sm font-medium">System to watch</span>
 			<SystemCombobox placeholder="Pick a system" value={target} onpick={(id) => (target = id)} />
@@ -192,7 +218,53 @@
 		</div>
 	{/if}
 
-	{#if kind === 'jump_range'}
+	{#if kind === 'structure_fuel'}
+		<div class="flex flex-col gap-1.5">
+			<label for="alert-fuel-days" class="text-sm font-medium">Warn</label>
+			<div class="flex items-center gap-2">
+				<Input
+					id="alert-fuel-days"
+					type="number"
+					min="1"
+					max="30"
+					class="w-24"
+					value={fuelDays}
+					oninput={(e) => (fuelDays = Number((e.currentTarget as HTMLInputElement).value))}
+					data-testid="alert-fuel-days"
+				/>
+				<span class="text-sm text-muted-foreground">
+					days before the fuel runs out, once per refuel
+				</span>
+			</div>
+		</div>
+	{/if}
+
+	{#if isStructureKind(kind)}
+		<!-- Nothing to measure: whose structures it watches is each member's own switch. -->
+		<fieldset class="flex flex-col gap-1.5" data-testid="alert-structure-events">
+			<legend class="mb-1.5 text-sm font-medium">
+				{kind === 'structure_fuel' ? 'Also tell me when' : 'Tell me when'}
+			</legend>
+			<div class="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
+				{#each eventChoices as choice (choice.kind)}
+					<label class="flex items-center gap-2 text-sm" for="alert-event-{choice.kind}">
+						<input
+							id="alert-event-{choice.kind}"
+							type="checkbox"
+							class="size-4 accent-primary"
+							checked={structureEvents.includes(choice.kind)}
+							onchange={(e) => toggleEvent(choice.kind, e.currentTarget.checked)}
+							data-testid="alert-event-{choice.kind}"
+						/>
+						{choice.label}
+					</label>
+				{/each}
+			</div>
+			{#if kind === 'structure_attack' && structureEvents.length === 0}
+				<p class="text-xs text-amber-500">Tick at least one, or the alert never speaks.</p>
+			{/if}
+		</fieldset>
+	{:else if kind === 'jump_range'}
 		<div class="flex flex-col gap-1.5">
 			<span class="text-sm font-medium">In range of</span>
 			<div class="flex flex-wrap items-center gap-2">

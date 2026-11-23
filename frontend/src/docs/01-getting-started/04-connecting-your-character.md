@@ -20,11 +20,13 @@ The first three power [character tracking](/documentation/tracking/character-pre
 
 ## Optional scopes
 
-| Scope                             | What it enables                                |
-| --------------------------------- | ---------------------------------------------- |
-| `esi-universe.read_structures.v1` | Names the structures you dock in, for the map. |
+| Scope                                  | What it enables                                                                                                      |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `esi-universe.read_structures.v1`      | Names the structures you dock in, for the map.                                                                       |
+| `esi-characters.read_notifications.v1` | Attacks on your corporation's structures, for the maps you [share structures](/documentation/intel/structures) with. |
+| `esi-corporations.read_structures.v1`  | Your corporation's structure fuel timers, for the same maps. Needs the Station Manager role in game.                 |
 
-Not asked for when you sign in, and never flagged as missing. Grant it from the characters settings page if you want it. Public structures are named anyway; a private one is visible only to pilots on its docking list, so the pilots list shows it as an unknown structure until someone with this scope docks in it.
+Not asked for when you sign in, and never flagged as missing. Grant them from the characters settings page if you want them. The two structure permissions read nothing until you turn sharing on for a map. Public structures are named anyway; a private one is visible only to pilots on its docking list, so the pilots list shows it as an unknown structure until someone with this scope docks in it.
 
 ## Multiple characters
 

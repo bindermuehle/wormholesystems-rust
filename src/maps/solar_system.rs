@@ -693,72 +693,44 @@ pub struct SetHome {
     pub value: bool,
 }
 
-/// Mark a placement as the map's home system (or clear it). A map has at most one home (a
-/// partial unique index enforces it), so setting a new home first clears the previous one.
+/// Mark a placement as one of the map's home systems, or clear just that one. A map with two
+/// chains that do not touch has a home for each, so there is no cap and nothing is replaced.
 pub async fn set_home(pool: &PgPool, actor: Actor, cmd: SetHome) -> Result<()> {
     run(pool, actor, cmd).await
 }
 
 pub(super) async fn apply_set_home(tx: &mut Tx<'_>, cmd: SetHome) -> Result<Effect> {
-    let previous: Option<i64> = sqlx::query_scalar!(
-        "select id from map_solar_systems where map_id = $1 and is_home",
+    let was = sqlx::query_scalar!(
+        "select is_home from map_solar_systems where id = $1 and map_id = $2",
+        cmd.map_solar_system_id,
         cmd.map_id,
     )
     .fetch_optional(&mut **tx)
-    .await?;
-    if cmd.value {
-        sqlx::query!(
-            "update map_solar_systems set is_home = false where map_id = $1 and is_home",
-            cmd.map_id,
-        )
-        .execute(&mut **tx)
-        .await?;
-    }
-    let updated = sqlx::query!(
+    .await?
+    .ok_or(MapError::NotFound)?;
+    sqlx::query!(
         "update map_solar_systems set is_home = $1 where id = $2 and map_id = $3",
         cmd.value,
         cmd.map_solar_system_id,
         cmd.map_id,
     )
     .execute(&mut **tx)
-    .await?
-    .rows_affected();
-    if updated == 0 {
-        return Err(MapError::NotFound);
-    }
-    // Undo puts the previous home back rather than just clearing this one.
-    let inverse = MapCommand::SetHome(match previous {
-        Some(id) => SetHome {
-            map_id: cmd.map_id,
-            map_solar_system_id: id,
-            value: true,
-        },
-        None => SetHome {
-            map_id: cmd.map_id,
-            map_solar_system_id: cmd.map_solar_system_id,
-            value: false,
-        },
+    .await?;
+    let inverse = MapCommand::SetHome(SetHome {
+        value: was,
+        ..cmd.clone()
     });
     let label = if cmd.value {
-        "set the home system"
+        "set a home system"
     } else {
-        "cleared the home system"
+        "cleared a home system"
     };
-    let mut effect = Effect::new("systems.home", label, CommandOutput::None)
+    Ok(Effect::new("systems.home", label, CommandOutput::None)
         .undo_with(inverse)
         .emit(MapEvent::SystemDetailsChanged {
             map_id: cmd.map_id,
             map_solar_system_id: cmd.map_solar_system_id,
-        });
-    if let Some(previous) = previous
-        && previous != cmd.map_solar_system_id
-    {
-        effect = effect.emit(MapEvent::SystemDetailsChanged {
-            map_id: cmd.map_id,
-            map_solar_system_id: previous,
-        });
-    }
-    Ok(effect)
+        }))
 }
 
 /// How many rally points a map holds at once. Setting one more replaces the oldest.

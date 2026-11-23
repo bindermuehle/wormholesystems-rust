@@ -2,6 +2,9 @@
 	// Raidable skyhooks: which ones are open, which are about to be, and how far away.
 	// The whole list is shown rather than a slice near you, because a two-hour window is long
 	// enough to fly a long way for. Sorted by distance by default.
+	import ClockIcon from '@lucide/svelte/icons/clock';
+	import CrosshairIcon from '@lucide/svelte/icons/crosshair';
+	import HourglassIcon from '@lucide/svelte/icons/hourglass';
 	import { toSearchResult } from '$lib/map/system';
 
 	import { createQuery } from '@tanstack/svelte-query';
@@ -28,7 +31,7 @@
 		describe,
 		formatDuration,
 		formatWindow,
-		statusDot,
+		statusMark,
 		statusText,
 		type SkyhookStatus,
 	} from '$lib/skyhooks/timer';
@@ -47,6 +50,7 @@
 	import { routeBatch } from '../../state/route-batch.svelte';
 	import type { MapState } from '../../state/map-state.svelte';
 	import SystemMenu from '../system-menu/SystemMenu.svelte';
+	import SystemMenuButton from '../system-menu/SystemMenuButton.svelte';
 	import RoutePopover from './RoutePopover.svelte';
 	import Hint from '$lib/components/Hint.svelte';
 
@@ -121,6 +125,18 @@
 	];
 </script>
 
+<!-- A shape per status, not one dot in three colours: it reads without the colour, and it
+     does not have to pulse to be told apart. The header's filters are the legend. -->
+{#snippet mark(status: SkyhookStatus, tone: string)}
+	{#if status === 'upcoming'}
+		<ClockIcon class={cn('size-3 shrink-0', tone)} />
+	{:else if status === 'closing'}
+		<HourglassIcon class={cn('size-3 shrink-0', tone)} />
+	{:else}
+		<CrosshairIcon class={cn('size-3 shrink-0', tone)} />
+	{/if}
+{/snippet}
+
 {#snippet heading(key: SkyhookColumn, label: string, extra = '')}
 	<SortHeader column={key} sort={sort.current} onsort={sort.toggle} class={extra}>
 		<span>{label}</span>
@@ -177,12 +193,10 @@
 										shown = on ? shown.filter((k) => k !== filter.key) : [...shown, filter.key];
 									}}
 								>
-									<span
-										class={cn(
-											'inline-block size-2 rounded-full',
-											on ? statusDot(filter.key) : 'bg-muted-foreground/30',
-										)}
-									></span>
+									{@render mark(
+										filter.key,
+										on ? statusMark(filter.key) : 'text-muted-foreground/40',
+									)}
 								</Button>
 							{/snippet}
 						</Tooltip.Trigger>
@@ -195,20 +209,31 @@
 	</MapPanelHeader>
 
 	<MapPanelContent>
-		<div class="mt-1 flex flex-col">
+		<!-- One grid for the whole list, every row a subgrid, so the columns line up. Once the
+		     card is wide enough to draw routes, the text columns take what they need and the
+		     route column gets everything left over. The last
+		     track is `auto`, not the cell's width: a row's padding comes out of its edge tracks,
+		     and a fixed one would push its cell into the padding. -->
+		<div
+			class="mt-1 grid grid-cols-[min-content_minmax(0,1fr)_minmax(0,1fr)_1rem_auto_auto_min-content] gap-x-2 @[36rem]/routes:grid-cols-[min-content_minmax(0,auto)_minmax(0,auto)_1rem_minmax(min-content,1fr)_auto_min-content] @[36rem]/routes:gap-x-4"
+		>
 			<div
-				class="flex items-center gap-2 px-3 pb-1 text-[10px] tracking-wider text-muted-foreground uppercase"
+				class="col-span-full grid grid-cols-subgrid items-center gap-x-2 @[36rem]/routes:gap-x-4 px-3 pb-1 text-[10px] tracking-wider text-muted-foreground uppercase"
 			>
-				<span class="w-2 shrink-0"></span>
+				<span></span>
 				{@render heading('planet', 'Planet', 'min-w-0 flex-1')}
 				{@render heading('region', 'Region', 'min-w-0 flex-1')}
 				<span class="w-4 shrink-0"></span>
-				{@render heading('jumps', 'J', 'w-10 shrink-0 justify-end')}
+				{@render heading('jumps', 'J', 'justify-end')}
 				{@render heading('timer', 'Timer', 'w-16 shrink-0 justify-end')}
+				<span></span>
 			</div>
 
 			{#if sorted.length === 0}
-				<p class="px-3 py-4 text-xs text-muted-foreground" data-testid="skyhooks-empty">
+				<p
+					class="col-span-full px-3 py-4 text-xs text-muted-foreground"
+					data-testid="skyhooks-empty"
+				>
 					{skyhooks.length === 0
 						? 'No raidable skyhooks right now.'
 						: 'Nothing matches the current filters.'}
@@ -218,17 +243,16 @@
 					{#snippet line()}
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
 						<div
-							class="flex items-center gap-2 border-b border-border/30 px-3 py-1 text-xs last:border-b-0 hover:bg-muted/30"
+							class="col-span-full grid grid-cols-subgrid items-center gap-x-2 @[36rem]/routes:gap-x-4 border-b border-border/30 px-3 py-1 text-xs last:border-b-0 hover:bg-muted/30"
 							data-testid="skyhook-row"
 							data-planet={row.skyhook.planet_name}
 							data-status={row.status}
 							onmouseenter={() => hover(row, true)}
 							onmouseleave={() => hover(row, false)}
 						>
-							<span
-								class={cn('size-2 shrink-0 rounded-full', statusDot(row.status))}
-								aria-label={row.status}
-							></span>
+							<span class="flex" role="img" aria-label={row.status}>
+								{@render mark(row.status, statusMark(row.status))}
+							</span>
 
 							<span class="flex min-w-0 flex-1 items-center gap-1.5">
 								<ClassBadge
@@ -258,7 +282,7 @@
 								{/if}
 							</span>
 
-							<span class="w-10 shrink-0 text-right">
+							<span class="flex min-w-10 justify-end">
 								{#if row.route}
 									<RoutePopover {map} steps={row.route.route}>
 										<span
@@ -291,6 +315,7 @@
 									</span>
 								</Tooltip.Content>
 							</Tooltip.Root>
+							<SystemMenuButton name={row.skyhook.planet_name} />
 						</div>
 					{/snippet}
 

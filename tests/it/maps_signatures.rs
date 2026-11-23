@@ -3,7 +3,7 @@
 
 use crate::common;
 
-use common::catalog::{C247, K162, seed_catalog};
+use common::catalog::{C247, K162, K162_C1_TO_3, K162_C2, seed_catalog, seed_wormhole_system};
 use common::map::{connect, place};
 use common::{SYS_A, SYS_B, member_with_role, world};
 use sqlx::PgPool;
@@ -399,6 +399,73 @@ async fn link_validations_and_unlink() {
         Some(TimeStatus::Eol),
         "state survives unlink"
     );
+}
+
+/// A K162 says "C1-3" from outside. Linked to a connection into a C2, it is the C2 one,
+/// and unlinking by undo makes it the guess it was again.
+#[tokio::test]
+async fn linking_a_class_group_k162_names_the_class_it_leads_to() {
+    use wormholesystems::maps::history::{MapIdBody, undo};
+
+    const C2: i64 = 31_000_002;
+    let (pool, _db) = common::db::fresh().await;
+    let w = world(&pool).await;
+    seed_catalog(&pool).await;
+    seed_wormhole_system(&pool, C2, 2).await;
+    let a = place(&pool, w.owner, w.map_id, SYS_A).await;
+    let b = place(&pool, w.owner, w.map_id, C2).await;
+    let conn = connect(&pool, w.owner, w.map_id, a, b).await;
+    let typed = |signature_id: &str, type_id| AddSignature {
+        map_id: w.map_id,
+        solar_system_id: SYS_A,
+        signature_id: signature_id.into(),
+        group: SignatureGroup::Wormhole,
+        signature_type_id: Some(type_id),
+        ..Default::default()
+    };
+    let sig = add_signature(&pool, w.owner, typed("ABC-123", K162_C1_TO_3))
+        .await
+        .unwrap();
+
+    let linked = link_signature(
+        &pool,
+        w.owner,
+        LinkSignature {
+            map_id: w.map_id,
+            signature_pk: sig.id,
+            connection_id: conn.id,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(linked.signature_type_id, Some(K162_C2));
+
+    undo(&pool, w.owner, MapIdBody { map_id: w.map_id })
+        .await
+        .unwrap();
+    let sigs = list_signatures(&pool, w.owner, w.map_id).await.unwrap();
+    let back = sigs.iter().find(|s| s.id == sig.id).unwrap();
+    // Off the hole it was linked to. On this fork an unlinked wormhole scan is raised a
+    // ghost straight away, so it points at that rather than at nothing.
+    assert_ne!(back.connection_id, Some(conn.id));
+    assert_eq!(back.signature_type_id, Some(K162_C1_TO_3));
+
+    // A type that never claimed a class is left alone.
+    let open = add_signature(&pool, w.owner, typed("DEF-456", K162))
+        .await
+        .unwrap();
+    let linked = link_signature(
+        &pool,
+        w.owner,
+        LinkSignature {
+            map_id: w.map_id,
+            signature_pk: open.id,
+            connection_id: conn.id,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(linked.signature_type_id, Some(K162));
 }
 
 /// An identified wormhole type dictates the group's size: linking applies it, manual edits

@@ -8,6 +8,7 @@ import type { NameBookmark } from '$lib/api/types/NameBookmark';
 import type { MapSystemView } from '$lib/api/types/MapSystemView';
 import type { Signature } from '$lib/api/types/Signature';
 import type { UpdateSignature } from '$lib/api/types/UpdateSignature';
+import type { WormholeSize } from '$lib/api/types/WormholeSize';
 
 /**
  * The fields a row may change. Taken from the wire type rather than restated, so a field
@@ -47,10 +48,22 @@ export interface SignatureContext {
 	actions?: SignatureActions;
 }
 
+/** Where a second hole to an already connected system goes; see `linkBeside`. */
+export interface SecondHole {
+	/** The unmapped node the signature's own hole is drawn as, if it has one. */
+	ghost: number | null;
+	/** The placements it joins, and the system at the far one. */
+	from: number;
+	to: number;
+	solarSystemId: number;
+	size: WormholeSize | undefined;
+}
+
 export interface SignatureActions {
 	update(signaturePk: number, patch: SignaturePatch): void;
 	remove(signaturePk: number): void;
 	link(signaturePk: number, connectionId: number): void;
+	linkBeside(signaturePk: number, hole: SecondHole): void;
 	unlink(signaturePk: number): void;
 	setPreserveMass(connectionId: number, preserve: boolean): void;
 	/** Name a placement from the echo column. */
@@ -110,6 +123,7 @@ export function makeSignatureContext(map: SignatureHost): SignatureContext {
 			update: (signaturePk, patch) => map.signatures.update(signaturePk, patch),
 			remove: (signaturePk) => map.signatures.remove(signaturePk),
 			link: (signaturePk, connectionId) => map.signatures.link(signaturePk, connectionId),
+			linkBeside: (signaturePk, hole) => map.signatures.linkBeside(signaturePk, hole),
 			unlink: (signaturePk) => map.signatures.unlink(signaturePk),
 			setPreserveMass: (connectionId, preserve) =>
 				map.connections.patch(connectionId, { preserve_mass: preserve }),

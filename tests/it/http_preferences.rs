@@ -17,7 +17,10 @@ async fn preferences_start_as_the_defaults_and_keep_a_change() {
 
     let fresh = get(app(&pool), "/api/me/preferences", Some(&cookie)).await;
     assert_eq!(fresh.status, StatusCode::OK);
-    assert_eq!(fresh.body, json!({ "effect_icons": true }));
+    assert_eq!(
+        fresh.body,
+        json!({ "effect_icons": true, "route_previews": true })
+    );
 
     let saved = request_json(
         app(&pool),
@@ -28,7 +31,10 @@ async fn preferences_start_as_the_defaults_and_keep_a_change() {
     )
     .await;
     assert_eq!(saved.status, StatusCode::OK, "{:?}", saved.body);
-    assert_eq!(saved.body, json!({ "effect_icons": false }));
+    assert_eq!(
+        saved.body,
+        json!({ "effect_icons": false, "route_previews": true })
+    );
 
     // An empty change leaves what was saved.
     let unchanged = request_json(
@@ -39,10 +45,16 @@ async fn preferences_start_as_the_defaults_and_keep_a_change() {
         json!({}),
     )
     .await;
-    assert_eq!(unchanged.body, json!({ "effect_icons": false }));
+    assert_eq!(
+        unchanged.body,
+        json!({ "effect_icons": false, "route_previews": true })
+    );
 
     let read = get(app(&pool), "/api/me/preferences", Some(&cookie)).await;
-    assert_eq!(read.body, json!({ "effect_icons": false }));
+    assert_eq!(
+        read.body,
+        json!({ "effect_icons": false, "route_previews": true })
+    );
 }
 
 /// They belong to the account, not the session: another sign-in, on another device, finds
@@ -63,7 +75,10 @@ async fn preferences_follow_the_account_to_another_session() {
 
     let phone = session_cookie(&pool, w.owner).await;
     let read = get(app(&pool), "/api/me/preferences", Some(&phone)).await;
-    assert_eq!(read.body, json!({ "effect_icons": false }));
+    assert_eq!(
+        read.body,
+        json!({ "effect_icons": false, "route_previews": true })
+    );
 
     // Someone else's account is untouched.
     let other_user = common::new_user(&pool).await;
@@ -77,7 +92,10 @@ async fn preferences_follow_the_account_to_another_session() {
     )
     .await;
     let theirs = get(app(&pool), "/api/me/preferences", Some(&other)).await;
-    assert_eq!(theirs.body, json!({ "effect_icons": true }));
+    assert_eq!(
+        theirs.body,
+        json!({ "effect_icons": true, "route_previews": true })
+    );
 }
 
 #[tokio::test]

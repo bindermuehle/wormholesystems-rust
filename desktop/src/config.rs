@@ -81,6 +81,9 @@ pub(crate) struct Overlay {
     pub corner: Corner,
     /// Its size until it is resized by its grip.
     pub size: OverlaySize,
+    /// The monitor it is on, by the id that outlasts a restart; `None` leaves it to the
+    /// system. Its position is within that monitor.
+    pub monitor: Option<String>,
     /// Where it was dragged to: its top-left corner on the screen.
     pub x: Option<f32>,
     pub y: Option<f32>,
@@ -137,6 +140,7 @@ impl Default for Overlay {
             open: false,
             corner: Corner::TopRight,
             size: OverlaySize::Medium,
+            monitor: None,
             x: None,
             y: None,
             width: None,

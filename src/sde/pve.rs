@@ -310,7 +310,7 @@ pub struct ObjectiveFactionIssuer {
 pub struct ObjectiveRewards {
     pub isk: ObjectiveCurrencyReward,
     pub lp: ObjectiveCurrencyReward,
-    pub standing: ObjectiveStandingReward,
+    pub standing: Option<ObjectiveStandingReward>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -348,8 +348,9 @@ pub struct MercenaryTacticalOperation {
     pub anarchy_impact: i32,
     pub description: LocalizedString,
     pub development_impact: i32,
+    /// Gone from builds 3698585 on.
     #[serde(rename = "dungeonID")]
-    pub dungeon_id: i64,
+    pub dungeon_id: Option<i64>,
     pub infomorph_bonus: i32,
     pub name: LocalizedString,
 }

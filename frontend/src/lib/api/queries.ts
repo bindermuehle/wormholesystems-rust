@@ -22,6 +22,7 @@ export const key = {
 	userSettings: (id: number) => ['maps', id, 'user-settings'] as const,
 	access: (id: number) => ['maps', id, 'access'] as const,
 	killmails: (id: number) => ['maps', id, 'killmails'] as const,
+	structures: (id: number) => ['maps', id, 'structures'] as const,
 	history: (id: number) => ['maps', id, 'history'] as const,
 	watchlist: (id: number) => ['maps', id, 'watchlist'] as const,
 	personalWatchlist: (id: number) => ['maps', id, 'personal-watchlist'] as const,
@@ -114,6 +115,11 @@ export const q = {
 		queryOptions({
 			queryKey: [...key.killmails(id), filter, selected, systems],
 			queryFn: ({ signal }) => api.mapKillmails(id, selected, signal),
+		}),
+	mapStructures: (id: number) =>
+		queryOptions({
+			queryKey: key.structures(id),
+			queryFn: ({ signal }) => api.mapStructures(id, signal),
 		}),
 	mapHistory: (id: number) =>
 		queryOptions({

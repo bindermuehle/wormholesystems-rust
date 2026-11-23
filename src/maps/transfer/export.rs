@@ -73,8 +73,9 @@ async fn export_settings(pool: &PgPool, map_id: i64) -> Result<SettingsSection> 
     let row = sqlx::query!(
         r#"select name, layout, allow_layout_override, alias_scheme, naming_strategy, ignored_alias,
                   bookmark_wormhole, bookmark_kspace, bookmark_return,
-                  (select solar_system_id from map_solar_systems
-                   where map_id = m.id and is_home) as "home?",
+                  array(select solar_system_id from map_solar_systems
+                        where map_id = m.id and is_home
+                        order by id) as "homes!: Vec<i64>",
                   array(select solar_system_id from map_solar_systems
                         where map_id = m.id and rallied_at is not null
                         order by rallied_at, id) as "rally!: Vec<i64>"
@@ -96,7 +97,8 @@ async fn export_settings(pool: &PgPool, map_id: i64) -> Result<SettingsSection> 
         bookmark_alias_scheme: row.alias_scheme,
         naming_strategy: Some(row.naming_strategy),
         bookmark_ignored_alias: Some(row.ignored_alias).filter(|a| !a.is_empty()),
-        home_solarsystem_id: row.home,
+        home_solarsystem_id: row.homes.first().copied(),
+        home_solarsystem_ids: Some(row.homes),
         rally_solarsystem_ids: Some(row.rally),
         rally_solarsystem_id: None,
     })

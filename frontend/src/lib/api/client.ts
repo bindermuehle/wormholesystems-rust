@@ -37,6 +37,7 @@ import type { ConnectionJump } from './types/ConnectionJump';
 import type { ClearMap } from './types/ClearMap';
 import type { EffectModifier } from './types/EffectModifier';
 import type { EveScoutConnection } from './types/EveScoutConnection';
+import type { MapStructures } from './types/MapStructures';
 import type { GridConfig } from './types/GridConfig';
 import type { Instance } from './types/Instance';
 import type { LinkSignature } from './types/LinkSignature';
@@ -303,6 +304,9 @@ export function createApi(
 					: `/api/maps/${mapId}/killmails?solar_system_id=${solarSystemId}`,
 				signal,
 			),
+
+		mapStructures: (mapId: number, signal?: AbortSignal) =>
+			get<MapStructures>(`/api/maps/${mapId}/structures`, signal),
 
 		// Places the system, connects it, and links the signature in one undoable step. The
 		// response is empty, the socket drives the refetch.

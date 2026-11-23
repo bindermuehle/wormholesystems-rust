@@ -1,0 +1,216 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select cs.structure_id, cs.name, cs.type_id, t.name as \"type_name?\",\n                  cs.solar_system_id, ss.name as \"system_name?\",\n                  ss.security_status as \"security?\",\n                  rg.name as \"region?\", ss.region_id as \"region_id?\",\n                  ss.constellation_id as \"constellation_id?\",\n                  ws.wormhole_class_id::bigint as \"wormhole_class_id?\",\n                  cs.corporation_id, oc.name as \"corporation_name?\",\n                  cs.state, cs.fuel_expires, cs.state_timer_end, cs.updated_at\n           from corporation_structures cs\n           left join types t on t.id = cs.type_id\n           left join solar_systems ss on ss.id = cs.solar_system_id\n           left join regions rg on rg.id = ss.region_id\n           left join wormhole_systems ws on ws.solar_system_id = ss.id\n           left join corporations oc on oc.id = cs.corporation_id\n           where exists(\n               select 1 from corporation_structure_readers rd\n               join map_structure_sharers sh on sh.character_id = rd.character_id\n               where sh.map_id = $1\n                 and rd.corporation_id = cs.corporation_id\n                 and sh.corporation_id = cs.corporation_id\n                 and rd.read_at > now() - make_interval(hours => $2))\n           order by cs.fuel_expires nulls last, cs.name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "structure_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "corporation_structures",
+            "name": "structure_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "corporation_structures",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "type_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "corporation_structures",
+            "name": "type_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "type_name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "types",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "solar_system_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "corporation_structures",
+            "name": "solar_system_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "system_name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "solar_systems",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "security?",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "solar_systems",
+            "name": "security_status"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "region?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "regions",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "region_id?",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "solar_systems",
+            "name": "region_id"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "constellation_id?",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "solar_systems",
+            "name": "constellation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "wormhole_class_id?",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 11,
+        "name": "corporation_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "corporation_structures",
+            "name": "corporation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "corporation_name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "corporations",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "corporation_structures",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "fuel_expires",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "corporation_structures",
+            "name": "fuel_expires"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "state_timer_end",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "corporation_structures",
+            "name": "state_timer_end"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "corporation_structures",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "7469d1ffeb3b22e6c6aeb6279656f96857d49bb0486851b5d4c04cb166911d96"
+}

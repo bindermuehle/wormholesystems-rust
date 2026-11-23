@@ -69,7 +69,12 @@ pub struct SettingsSection {
     #[ts(optional)]
     pub naming_strategy: Option<NamingStrategyKind>,
     pub bookmark_ignored_alias: Option<String>,
+    /// The first home system, which is all the legacy app reads.
     pub home_solarsystem_id: Option<i64>,
+    /// Every home system. A file without it has the one above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub home_solarsystem_ids: Option<Vec<i64>>,
     /// Oldest first. On import only the newest two are kept.
     #[serde(default)]
     pub rally_solarsystem_ids: Option<Vec<i64>>,
@@ -81,6 +86,14 @@ pub struct SettingsSection {
 }
 
 impl SettingsSection {
+    /// The file's home systems, whichever way it spells them.
+    pub(super) fn home_ids(&self) -> Vec<i64> {
+        match &self.home_solarsystem_ids {
+            Some(ids) => ids.clone(),
+            None => self.home_solarsystem_id.into_iter().collect(),
+        }
+    }
+
     /// The file's rally points, whichever way it spells them.
     pub(super) fn rally_ids(&self) -> Vec<i64> {
         match &self.rally_solarsystem_ids {

@@ -10,6 +10,7 @@
 	import MapPanelContent from '$lib/components/map-panel/MapPanelContent.svelte';
 	import MapPanelHeader from '$lib/components/map-panel/MapPanelHeader.svelte';
 	import SystemMenu from '../system-menu/SystemMenu.svelte';
+	import SystemMenuButton from '../system-menu/SystemMenuButton.svelte';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { jumpTone } from '$lib/routing/algorithm';
 	import { isIdle, isScanner, orderPilots } from '$lib/characters/order';
@@ -78,7 +79,12 @@
 				No pilots online. Anyone who turns on Share location for this map shows up here.
 			</p>
 		{:else}
-			<div class="flex flex-col">
+			<!-- One grid for the whole list, every row a subgrid, so the columns line up. Once the
+			     card is wide enough to draw routes, the text columns take what they need and the
+			     route column gets everything left over. -->
+			<div
+				class="grid grid-cols-[min-content_7rem_minmax(0,1fr)_minmax(0,1fr)_auto_min-content] gap-x-2 @[36rem]/routes:grid-cols-[min-content_7rem_minmax(0,auto)_minmax(0,auto)_minmax(min-content,1fr)_min-content] @[36rem]/routes:gap-x-4"
+			>
 				{#each sorted as pilot (pilot.character_id)}
 					{@const where = place(pilot.solar_system_id)}
 					{@const route =
@@ -87,7 +93,7 @@
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
 						<div
 							class={cn(
-								'flex items-center gap-2 border-b border-border/30 px-3 py-1 text-xs last:border-b-0 hover:bg-muted/30',
+								'col-span-full grid grid-cols-subgrid items-center gap-x-2 @[36rem]/routes:gap-x-4 border-b border-border/30 px-3 py-1 text-xs last:border-b-0 hover:bg-muted/30',
 								isIdle(pilot) && 'opacity-50',
 							)}
 							data-testid="pilot-row"
@@ -97,7 +103,7 @@
 						>
 							<EveImage kind="character" id={pilot.character_id} class="size-5 shrink-0 rounded" />
 
-							<span class="flex min-w-0 shrink-0 basis-28 items-center gap-1">
+							<span class="flex min-w-0 items-center gap-1">
 								<Hint text={pilot.name} clippedOnly focusable={false}>
 									{#snippet child({ props })}
 										<span
@@ -172,7 +178,7 @@
 								{/if}
 							</span>
 
-							<span class="shrink-0 text-right">
+							<span class="flex justify-end">
 								{#if route}
 									<RoutePopover {map} steps={route.route}>
 										<span
@@ -187,6 +193,11 @@
 									<span class="text-[10px] whitespace-nowrap text-muted-foreground/60">--</span>
 								{/if}
 							</span>
+							{#if where}
+								<SystemMenuButton name={where.name} />
+							{:else}
+								<span></span>
+							{/if}
 						</div>
 					{/snippet}
 

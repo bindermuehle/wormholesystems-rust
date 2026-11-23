@@ -1,0 +1,63 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select sh.character_id as \"character_id!\", sh.corporation_id as \"corporation_id!\",\n                  array_agg(distinct sh.map_id) as \"map_ids!\",\n                  coalesce(bool_or(sc.name = $1), false) as \"notifications!\",\n                  coalesce(bool_or(sc.name = $2), false) as \"structures!\"\n           from map_structure_sharers sh\n           join esi_tokens t on t.character_id = sh.character_id and t.rejected_at is null\n           join esi_token_scopes ts on ts.token_id = t.id\n           join esi_scopes sc on sc.id = ts.scope_id and sc.name in ($1, $2)\n           where sh.corporation_id >= $3\n           group by sh.character_id, sh.corporation_id\n           order by sh.character_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "character_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "map_structure_sharers",
+            "name": "character_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "corporation_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "map_structure_sharers",
+            "name": "corporation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "map_ids!",
+        "type_info": "Int8Array",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "notifications!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "structures!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "c9559146a7bf96a39de208aed0eb4bfc4246b323fc585adc2b5b74577aa2410d"
+}

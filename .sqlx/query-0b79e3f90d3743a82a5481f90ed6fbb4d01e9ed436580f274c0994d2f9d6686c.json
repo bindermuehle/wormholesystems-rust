@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select wormhole_class_id from solar_systems where id = any($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "wormhole_class_id",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "solar_systems",
+            "name": "wormhole_class_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "0b79e3f90d3743a82a5481f90ed6fbb4d01e9ed436580f274c0994d2f9d6686c"
+}

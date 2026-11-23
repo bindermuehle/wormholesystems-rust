@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { compareForTree, computeTreeLayout, type TreeInput } from './tree';
 import type { MapSystemView } from '$lib/api/types/MapSystemView';
 
-// Defaults: gridSize 20, levelGap 320, siblingGap 60, marginX 20, marginY 20.
+// Defaults: gridSize 20, levelGap 260 to 320 by how busy the corridor is, siblingGap 60, marginX 20, marginY 20.
 
 function layout(input: Partial<TreeInput>) {
 	return computeTreeLayout({ nodeIds: [], edges: [], rootIds: [], ...input });
@@ -25,8 +25,8 @@ describe('computeTreeLayout', () => {
 		});
 
 		expect(positions.get(1)).toEqual({ x: 20, y: 20 });
-		expect(positions.get(2)).toEqual({ x: 340, y: 20 });
-		expect(positions.get(3)).toEqual({ x: 660, y: 20 });
+		expect(positions.get(2)).toEqual({ x: 280, y: 20 });
+		expect(positions.get(3)).toEqual({ x: 540, y: 20 });
 	});
 
 	it('roots at the home system when nothing is pinned', () => {
@@ -34,11 +34,11 @@ describe('computeTreeLayout', () => {
 			nodeIds: [1, 2],
 			edges: [{ from: 1, to: 2 }],
 			rootIds: [],
-			homeId: 2,
+			homeIds: [2],
 		});
 
 		expect(positions.get(2)!.x).toBe(20);
-		expect(positions.get(1)!.x).toBe(340);
+		expect(positions.get(1)!.x).toBe(280);
 	});
 
 	it('keeps home in the first column even when other systems are pinned', () => {
@@ -52,7 +52,7 @@ describe('computeTreeLayout', () => {
 				{ from: 3, to: 9 },
 			],
 			rootIds: [1],
-			homeId: 9,
+			homeIds: [9],
 		});
 
 		expect(positions.get(9)!.x).toBe(20);
@@ -67,7 +67,7 @@ describe('computeTreeLayout', () => {
 				{ from: 2, to: 9 },
 			],
 			rootIds: [1],
-			homeId: 9,
+			homeIds: [9],
 			// Sorts the pinned system first, which must not lift it above home.
 			compareNodes: (a, b) => a - b,
 		});
@@ -75,17 +75,34 @@ describe('computeTreeLayout', () => {
 		expect(positions.get(9)!.y).toBeLessThan(positions.get(1)!.y);
 	});
 
+	it('roots a tree at each home when there are several', () => {
+		const positions = layout({
+			nodeIds: [1, 2, 3, 4],
+			edges: [
+				{ from: 1, to: 2 },
+				{ from: 3, to: 4 },
+			],
+			rootIds: [],
+			homeIds: [1, 3],
+		});
+
+		expect(positions.get(1)!.x).toBe(20);
+		expect(positions.get(3)!.x).toBe(20);
+		expect(positions.get(2)!.x).toBe(280);
+		expect(positions.get(4)!.x).toBe(280);
+	});
+
 	it('does not root the home system twice when it is also pinned', () => {
 		const positions = layout({
 			nodeIds: [1, 2],
 			edges: [{ from: 1, to: 2 }],
 			rootIds: [1],
-			homeId: 1,
+			homeIds: [1],
 		});
 
 		expect(positions.size).toBe(2);
 		expect(positions.get(1)!.x).toBe(20);
-		expect(positions.get(2)!.x).toBe(340);
+		expect(positions.get(2)!.x).toBe(280);
 	});
 
 	it('fans children out around their parent, a sibling gap apart', () => {
@@ -101,8 +118,8 @@ describe('computeTreeLayout', () => {
 		const parent = positions.get(1)!;
 		const first = positions.get(2)!;
 		const second = positions.get(3)!;
-		expect(first.x).toBe(340);
-		expect(second.x).toBe(340);
+		expect(first.x).toBe(280);
+		expect(second.x).toBe(280);
 		expect(second.y - first.y).toBe(60);
 		// Exactly between them, not a snap away from it. A sibling pitch of an even number
 		// of cells is what buys this: at an odd pitch the midpoint is half a cell off the
@@ -233,7 +250,7 @@ describe('computeTreeLayout', () => {
 		});
 
 		expect(positions.size).toBe(2);
-		expect(positions.get(2)!.x).toBe(340);
+		expect(positions.get(2)!.x).toBe(280);
 	});
 
 	it('attaches each system to the pinned root nearest it', () => {
@@ -250,8 +267,30 @@ describe('computeTreeLayout', () => {
 		// Both roots in the first column; the 3-4 edge must not drag either deeper.
 		expect(positions.get(1)!.x).toBe(20);
 		expect(positions.get(2)!.x).toBe(20);
-		expect(positions.get(3)!.x).toBe(340);
-		expect(positions.get(4)!.x).toBe(340);
+		expect(positions.get(3)!.x).toBe(280);
+		expect(positions.get(4)!.x).toBe(280);
+	});
+	it('gives a corridor only the room its lines need', () => {
+		// One root fanning into eight holes, then a single hole off the first of them.
+		const fan = [2, 3, 4, 5, 6, 7, 8, 9];
+		const positions = layout({
+			nodeIds: [1, ...fan, 10],
+			edges: [...fan.map((to) => ({ from: 1, to })), { from: 2, to: 10 }],
+			rootIds: [1],
+		});
+		// Four runs up and four down share four lanes: (4 + 1) * 24 on top of the node.
+		expect(positions.get(2)!.x - positions.get(1)!.x).toBe(300);
+		expect(positions.get(10)!.x - positions.get(2)!.x).toBe(260);
+	});
+
+	it('never spreads columns past the level gap', () => {
+		const fan = Array.from({ length: 20 }, (_, i) => i + 2);
+		const positions = layout({
+			nodeIds: [1, ...fan],
+			edges: fan.map((to) => ({ from: 1, to })),
+			rootIds: [1],
+		});
+		expect(positions.get(2)!.x - positions.get(1)!.x).toBe(320);
 	});
 });
 

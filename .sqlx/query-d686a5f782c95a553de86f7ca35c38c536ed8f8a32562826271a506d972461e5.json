@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into map_alerts\n             (map_id, created_by_user_id, name, kind, delivery, map_webhook_id,\n              discord_guild_id, discord_channel_id, map_webhook_role_id, mention,\n              target_solar_system_id, origin_solar_system_id, max_jumps, ship_type, jdc_level,\n              filters, filter_match, fuel_days, structure_events)\n         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,\n                 $18, $19)\n         returning id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "map_alerts",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Int8",
+        "Text",
+        "Text",
+        "Int8",
+        "Text",
+        "Int8",
+        "Int8",
+        "Int4",
+        "Text",
+        "Int4",
+        "Jsonb",
+        "Text",
+        "Int4",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d686a5f782c95a553de86f7ca35c38c536ed8f8a32562826271a506d972461e5"
+}

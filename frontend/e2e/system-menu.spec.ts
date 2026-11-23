@@ -166,3 +166,28 @@ test('viewers get no write items', async ({ page, api, browser }) => {
 	await ctx.close();
 	void page;
 });
+
+test('a system gives its names to the clipboard, from the menu and with Ctrl+C', async ({
+	page,
+	api,
+}) => {
+	const mapId = await createMap(api, 'E2E SysMenuCopy');
+	await addSystem(api, mapId, JITA, { x: 200, y: 200 });
+	await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+	const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
+
+	await gotoApp(page, `/maps/${mapId}`);
+	const node = page.getByTestId('system-node').filter({ hasText: 'Jita' });
+	await node.click({ button: 'right' });
+	await page.getByTestId('menu-copy').hover();
+	const names = page.getByTestId('copy-submenu').getByRole('menuitem');
+	// On the map, so the constellation is known by name as well.
+	await expect(names).toHaveText(['System Jita', 'Constellation Kimotoro', 'Region The Forge']);
+	await names.last().click();
+	await expect.poll(clipboard).toBe('The Forge');
+
+	// The active system is what Ctrl+C means on the map.
+	await node.click();
+	await page.keyboard.press('ControlOrMeta+c');
+	await expect.poll(clipboard).toBe('Jita');
+});

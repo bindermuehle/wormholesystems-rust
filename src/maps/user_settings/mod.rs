@@ -24,6 +24,8 @@ use panels::{PanelLayouts, validate_layouts};
 )]
 pub struct MapUserSettings {
     pub tracking_allowed: bool,
+    /// Let this map see the structures of this user's corporations: attacks, and fuel.
+    pub structures_shared: bool,
     pub show_threat_level: bool,
     pub compact_signature_list: bool,
     pub show_statics_first: bool,
@@ -86,6 +88,9 @@ pub struct UpdateMapUserSettings {
     #[serde(default)]
     #[ts(optional)]
     pub tracking_allowed: Option<bool>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub structures_shared: Option<bool>,
     #[serde(default)]
     #[ts(optional)]
     pub show_threat_level: Option<bool>,
@@ -169,6 +174,7 @@ impl Default for MapUserSettings {
             layout_override: None,
             is_pinned: false,
             tracking_allowed: false,
+            structures_shared: false,
             show_threat_level: true,
             compact_signature_list: false,
             show_statics_first: false,
@@ -199,7 +205,8 @@ impl Default for MapUserSettings {
 /// exists yet.
 pub async fn load(db: &PgPool, map_id: i64, user_id: i64) -> Result<MapUserSettings> {
     let row = sqlx::query!(
-        r#"select tracking_allowed, show_threat_level, compact_signature_list,
+        r#"select tracking_allowed, structures_shared, show_threat_level,
+                  compact_signature_list,
                   show_statics_first,
                   route_preference,
                   security_penalty,
@@ -225,6 +232,7 @@ pub async fn load(db: &PgPool, map_id: i64, user_id: i64) -> Result<MapUserSetti
     Ok(match row {
         Some(r) => MapUserSettings {
             tracking_allowed: r.tracking_allowed,
+            structures_shared: r.structures_shared,
             show_threat_level: r.show_threat_level,
             compact_signature_list: r.compact_signature_list,
             show_statics_first: r.show_statics_first,
@@ -309,6 +317,7 @@ pub async fn update(
              background_image_mode = coalesce($25, background_image_mode),
              preselect_signature = coalesce($26, preselect_signature),
              route_use_wormholes = coalesce($27, route_use_wormholes),
+             structures_shared = coalesce($28, structures_shared),
              updated_at = now()
            where map_id = $1 and user_id = $2"#,
         map_id,
@@ -338,6 +347,7 @@ pub async fn update(
         body.background_image_mode as Option<BackgroundMode>,
         body.preselect_signature,
         body.route_use_wormholes,
+        body.structures_shared,
     )
     .execute(&mut *tx)
     .await?;
@@ -348,6 +358,10 @@ pub async fn update(
     // nothing published here, switching it off never reaches the other viewers at all.
     if body.tracking_allowed.is_some() {
         crate::realtime::hub().publish(crate::realtime::MapEvent::CharactersChanged { map_id });
+    }
+    // The same for structures: what the map's card shows just changed for everyone.
+    if body.structures_shared.is_some() {
+        crate::realtime::hub().publish(crate::realtime::MapEvent::StructuresChanged { map_id });
     }
 
     load(pool, map_id, user_id).await

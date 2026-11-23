@@ -43,7 +43,7 @@ pub struct LayoutItem {
 
 /// Panels the layout may refer to. The server keeps its own copy so a bad payload is a
 /// 400 rather than a page that renders a tile nothing knows how to draw.
-pub const PANEL_IDS: [&str; 10] = [
+pub const PANEL_IDS: [&str; 11] = [
     "map",
     "navigation",
     "system-info",
@@ -54,6 +54,7 @@ pub const PANEL_IDS: [&str; 10] = [
     "skyhooks",
     "killmails",
     "evescout",
+    "structures",
 ];
 
 const BREAKPOINT_KEYS: [&str; 4] = ["xs", "sm", "md", "lg"];

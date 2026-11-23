@@ -36,8 +36,9 @@ pub struct SkinLicense {
     #[serde(rename = "_key")]
     pub id: i64,
     pub duration: i32,
+    /// The same as the key. Builds from 3698585 on leave it out.
     #[serde(rename = "licenseTypeID")]
-    pub license_type_id: i64,
+    pub license_type_id: Option<i64>,
     #[serde(rename = "skinID")]
     pub skin_id: i64,
     pub is_single_use: Option<bool>,

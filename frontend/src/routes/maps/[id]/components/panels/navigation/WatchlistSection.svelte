@@ -10,6 +10,7 @@
 	import SortHeader from '$lib/components/SortHeader.svelte';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import SystemMenu from '../../system-menu/SystemMenu.svelte';
+	import SystemMenuItems from '../../system-menu/SystemMenuItems.svelte';
 	import SystemRow from '../../pickers/SystemRow.svelte';
 	import { SYSTEM_CELLS_4, SYSTEM_LIST_ACTIONS, SYSTEM_ROW } from '../../pickers/columns';
 	import { compareWatchlistEntries } from '$lib/map/watchlist';
@@ -163,9 +164,9 @@
 				{:else}
 					<span class="size-3"></span>
 				{/if}
-				{#if canEdit}
+				{#if canEdit || r}
 					<DropdownMenu.Root>
-						<Hint text={'Watchlist actions'}>
+						<Hint text={'Actions'}>
 							{#snippet child({ props })}
 								<DropdownMenu.Trigger
 									class="flex items-center text-muted-foreground hover:text-foreground disabled:opacity-40"
@@ -178,28 +179,35 @@
 								</DropdownMenu.Trigger>
 							{/snippet}
 						</Hint>
-						<DropdownMenu.Content align="end" class="min-w-44">
-							<DropdownMenu.Item
-								class="text-xs"
-								onclick={() => list.setPinned(entry.id, !entry.is_pinned)}
-							>
-								{#if entry.is_pinned}
-									<PinOffIcon class="size-3.5" />
-									Unpin
-								{:else}
-									<PinIcon class="size-3.5" />
-									Pin as a route quick-pick
-								{/if}
-							</DropdownMenu.Item>
-							<DropdownMenu.Separator />
-							<DropdownMenu.Item
-								variant="destructive"
-								class="text-xs"
-								onclick={() => remove(entry.id)}
-							>
-								<Trash2Icon class="size-3.5" />
-								Remove from the watchlist
-							</DropdownMenu.Item>
+						<DropdownMenu.Content align="end" class="min-w-52">
+							{#if canEdit}
+								<DropdownMenu.Item
+									class="text-xs"
+									onclick={() => list.setPinned(entry.id, !entry.is_pinned)}
+								>
+									{#if entry.is_pinned}
+										<PinOffIcon class="size-3.5" />
+										Unpin
+									{:else}
+										<PinIcon class="size-3.5" />
+										Pin as a route quick-pick
+									{/if}
+								</DropdownMenu.Item>
+								<DropdownMenu.Separator />
+								<DropdownMenu.Item
+									variant="destructive"
+									class="text-xs"
+									onclick={() => remove(entry.id)}
+								>
+									<Trash2Icon class="size-3.5" />
+									Remove from the watchlist
+								</DropdownMenu.Item>
+							{/if}
+							<!-- Everything the row's right-click offers, for whoever never right-clicks. -->
+							{#if r}
+								{#if canEdit}<DropdownMenu.Separator />{/if}
+								<SystemMenuItems {map} system={r} />
+							{/if}
 						</DropdownMenu.Content>
 					</DropdownMenu.Root>
 				{:else}

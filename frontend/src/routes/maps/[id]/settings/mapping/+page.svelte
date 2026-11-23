@@ -12,7 +12,11 @@
 	import SettingRow from '$lib/components/settings/SettingRow.svelte';
 	import * as Card from '$lib/components/ui/card';
 	import { Switch } from '$lib/components/ui/switch';
-	import { LOCATION_SCOPE } from '$lib/esi/scopes';
+	import {
+		CORPORATION_STRUCTURES_SCOPE,
+		LOCATION_SCOPE,
+		NOTIFICATIONS_SCOPE,
+	} from '$lib/esi/scopes';
 	import { mapSettings } from '../context.svelte';
 
 	const ctx = mapSettings();
@@ -26,6 +30,13 @@
 		['tracking_allowed', 'prompt_for_signature', 'preselect_signature', 'suggest_alias'] as const
 	).map((k) => AUTOMATION[k]);
 	const canManage = $derived(ctx.canManage);
+	// Sharing reads with whichever of the two permissions a character granted, so it is
+	// only held back when there is neither.
+	const hasStructureScope = $derived(
+		scopes.some(
+			(s) => s.granted && [NOTIFICATIONS_SCOPE, CORPORATION_STRUCTURES_SCOPE].includes(s.scope),
+		),
+	);
 	const ghosting = $derived(ctx.view.map.ghost_unlinked_wormholes);
 
 	const saveUserSettings = ctx.saveUserSettings;
@@ -89,6 +100,34 @@
 					{/snippet}
 				</SettingRow>
 			{/each}
+		</Card.Content>
+	</Card.Root>
+
+	<Card.Root>
+		<Card.Header>
+			<Card.Title>Structures</Card.Title>
+			<Card.Description>
+				What this map may know about your corporations' structures. Yours alone, per map.
+			</Card.Description>
+		</Card.Header>
+		<Card.Content class="flex flex-col py-0">
+			<SettingRow
+				id="structures-shared"
+				label="Share my structures with this map"
+				description="Members of this map see attacks on your corporations' structures, towers, customs offices and skyhooks, and how long their fuel lasts, and the map's Discord alerts can announce them. Read with each of your characters that granted the Notifications or Corporation structures permission, and only what that character can see in game. Off by default; turning it off hides everything again."
+				blocked={hasStructureScope
+					? undefined
+					: 'Nothing is read until a character grants Notifications or Corporation structures, under Settings, Characters.'}
+			>
+				{#snippet control()}
+					<Switch
+						checked={settings?.structures_shared ?? false}
+						aria-label="Share my structures with this map"
+						onCheckedChange={(v) => saveUserSettings({ structures_shared: v })}
+						data-testid="setting-structures-shared"
+					/>
+				{/snippet}
+			</SettingRow>
 		</Card.Content>
 	</Card.Root>
 </div>

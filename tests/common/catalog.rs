@@ -7,6 +7,10 @@ use sqlx::PgPool;
 pub(crate) const K162: i64 = 500;
 /// A hole into C3 that admits 300,000,000 kg per jump, so a medium.
 pub(crate) const C247: i64 = 510;
+/// The far side of a hole into a C1, C2 or C3: all the game says from outside.
+pub(crate) const K162_C1_TO_3: i64 = 580;
+/// The far side of a hole into a C2.
+pub(crate) const K162_C2: i64 = 581;
 /// A data site.
 pub(crate) const RELAY: i64 = 600;
 /// The hub EVE-Scout reports holes from.
@@ -27,6 +31,8 @@ pub(crate) async fn seed_catalog(pool: &PgPool) {
         "insert into signature_types (id, signature, name, signature_category_id, target_class)
          values (500, 'K162', 'K162 - Unknown', 1, null),
                 (510, 'C247', 'C247 - C3', 1, 3),
+                (580, 'K162', 'K162 - C1-3', 1, 101),
+                (581, 'K162', 'K162 - C2', 1, 2),
                 (600, null, 'Unsecured Frontier Enclave Relay', 2, null)",
     ] {
         sqlx::query(statement)

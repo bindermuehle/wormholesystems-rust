@@ -158,7 +158,7 @@ pub async fn store(pool: &PgPool, fetched: &[RaidableSkyhook]) -> sqlx::Result<u
 ///
 /// The SDE ships a `name` for only 43 of the 68,000-odd planets, so the label is built the
 /// way the client builds it, from the celestial index every planet has.
-fn planet_label(system: &str, celestial_index: i32, stored: Option<&str>) -> String {
+pub(crate) fn planet_label(system: &str, celestial_index: i32, stored: Option<&str>) -> String {
     if let Some(name) = stored.map(str::trim).filter(|n| !n.is_empty()) {
         return name.to_string();
     }

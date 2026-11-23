@@ -41,7 +41,8 @@ you just flew and name the system you are in.
   closes.
 - Hole keys act on the last hole jumped and copy the updated bookmark afterwards, so a
   `{mass}` or `{life}` token in your format stays right.
-- The overlay sits in a screen corner and takes clicks, never the keyboard. On Wayland it
+- The overlay sits in a screen corner and takes clicks, never the keyboard. With more than
+  one monitor, Settings picks the one it is on. On Wayland it
   is a layer-shell surface, which compositors keep above everything (GNOME has no layer
   shell and gets a pop-up window); elsewhere it is a pop-up window.
 
@@ -53,7 +54,8 @@ The hole keys wait until a jump's signature is picked.
 Closing the window keeps the app running in the tray, overlay and keys included. Click the
 tray icon to open the window again; Quit is in its menu. On Linux that takes a
 StatusNotifier tray (Waybar, KDE, GNOME with the AppIndicator extension); without one,
-closing the window quits.
+closing the window quits. Starting the app while it runs opens that window too, rather
+than a second copy.
 
 Sign in with a personal access token from Settings, Tokens on the website. Settings are
 kept in `wormholesystems/desktop.toml` in the system's config folder. One that does not

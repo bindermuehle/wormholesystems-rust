@@ -7,6 +7,7 @@ use crate::maps::Actor;
 use crate::maps::command::{CommandOutput, Effect, MapCommand, Sequence, Tx, run};
 use crate::maps::connection::SetConnectionStatus;
 use crate::maps::error::{MapError, Result};
+use crate::maps::naming::bookmark::{C1_TO_3, C4_TO_5};
 use crate::maps::store;
 use crate::realtime::MapEvent;
 
@@ -55,6 +56,81 @@ async fn check_reaches(tx: &mut Tx<'_>, cmd: &LinkSignature, solar_system_id: i6
     }
 }
 
+/// Which signatures to look at for a type the map can now say more exactly.
+#[derive(Debug, Clone, Copy)]
+pub(in crate::maps) enum Narrow {
+    /// The ones linked to this connection.
+    Connection(i64),
+    /// The ones linked to any connection at this placement.
+    Placement(i64),
+}
+
+/// A K162 only says so much from outside: "C1-3" or "C4-5". Once its connection leads to a
+/// system the map knows, the class is no longer a guess, so a signature typed as such a
+/// group becomes the type of the same code that names the class. Returns the undo of each
+/// change and what to announce.
+pub(in crate::maps) async fn narrow_types(
+    tx: &mut Tx<'_>,
+    map_id: i64,
+    which: Narrow,
+) -> Result<(Vec<MapCommand>, Vec<MapEvent>)> {
+    let (connection, placement) = match which {
+        Narrow::Connection(id) => (Some(id), None),
+        Narrow::Placement(id) => (None, Some(id)),
+    };
+    let narrowed = sqlx::query!(
+        r#"update signatures s
+           set signature_type_id = exact.id, updated_at = now()
+           from map_connections c, map_solar_systems f, map_solar_systems t,
+                solar_systems far, signature_types loose, signature_types exact
+           where s.map_id = $1 and c.id = s.connection_id and c.map_id = s.map_id
+             and ($2::bigint is null or c.id = $2)
+             and ($3::bigint is null or $3 in (c.from_system, c.to_system))
+             and f.id = c.from_system and t.id = c.to_system
+             and far.id = case when f.solar_system_id = s.solar_system_id
+                               then t.solar_system_id else f.solar_system_id end
+             and loose.id = s.signature_type_id
+             and ((loose.target_class = $4 and far.wormhole_class_id in (1, 2, 3))
+                  or (loose.target_class = $5 and far.wormhole_class_id in (4, 5)))
+             and exact.signature = loose.signature
+             and exact.signature_category_id = loose.signature_category_id
+             and exact.target_class = far.wormhole_class_id
+           returning s.id, s.solar_system_id, loose.id as was"#,
+        map_id,
+        connection,
+        placement,
+        C1_TO_3,
+        C4_TO_5,
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let undo = narrowed
+        .iter()
+        .map(|row| {
+            MapCommand::UpdateSignature(UpdateSignature {
+                map_id,
+                signature_pk: row.id,
+                signature_id: None,
+                group: None,
+                signature_type_id: Some(Some(row.was)),
+                name: None,
+                size: None,
+                mass_status: None,
+                time_status: None,
+            })
+        })
+        .collect();
+    let events = narrowed
+        .iter()
+        .map(|row| MapEvent::SignatureChanged {
+            map_id,
+            solar_system_id: row.solar_system_id,
+        })
+        .collect();
+    Ok((undo, events))
+}
+
 pub(in crate::maps) async fn apply_link_signature(
     tx: &mut Tx<'_>,
     cmd: LinkSignature,
@@ -96,6 +172,8 @@ pub(in crate::maps) async fn apply_link_signature(
     store::signatures::set_connection(tx, cmd.map_id, cmd.signature_pk, Some(cmd.connection_id))
         .await?;
 
+    let (retyped, _) = narrow_types(tx, cmd.map_id, Narrow::Connection(cmd.connection_id)).await?;
+
     // Re-read: the merge trigger may have changed this row's state after the UPDATE.
     let linked = fetch_signature_tx(tx, cmd.map_id, cmd.signature_pk).await?;
     // Undo takes the link back first, so the old life-cycle state goes back onto this
@@ -134,6 +212,7 @@ pub(in crate::maps) async fn apply_link_signature(
     });
     let mut steps: Vec<MapCommand> = unlink.into_iter().collect();
     steps.extend([restore_state, restore_connection]);
+    steps.extend(retyped);
     steps.extend(displaced.map(|signature_pk| {
         MapCommand::LinkSignature(LinkSignature {
             map_id: cmd.map_id,

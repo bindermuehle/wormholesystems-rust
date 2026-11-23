@@ -41,7 +41,7 @@ AH2 RST J5A-IX Curse
 
 ## Known limitation
 
-A single system with more than 22 direct wormhole children (there are only so many non-reserved letters) will start repeating the last suggestion, the same way the numeric scheme's suggestions become ambiguous past 9 children of one system.  
+A single system with more than 22 direct wormhole children (there are only so many non-reserved letters) will start repeating the last suggestion. The numeric scheme has more room: past `9` it goes on in letters (`A`, `B`, `C`…), so every hole stays one character.  
 Neither case is common enough to warrant a two-letter or multi-digit escape hatch.
 
 ## Switching schemes

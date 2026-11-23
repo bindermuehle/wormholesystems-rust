@@ -1174,7 +1174,7 @@ mod tests {
         ];
         for written in all {
             let env = written.apply("", &[]);
-            let mut expected = written.clone();
+            let mut expected = written;
             if let Proxy::Direct(d) = &mut expected.proxy {
                 d.public_url = "https://map.example.com".into();
             }

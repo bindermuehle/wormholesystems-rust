@@ -141,6 +141,7 @@ mod tests {
             id,
             alias: alias.map(Into::into),
             is_home: false,
+            is_pinned: false,
             system: Some(NodeSystem {
                 solar_system_id: 31_000_000 + id,
                 name: format!("J{id}"),
@@ -286,6 +287,23 @@ mod tests {
         nodes[0].is_home = false;
         let map = NamingMap::new(settings(), nodes, farm_edges());
         assert_eq!(bookmark(&map, 2, 4), "1 ABC C5");
+    }
+
+    #[test]
+    fn a_pinned_system_is_the_root_of_a_chain_with_no_home() {
+        let mut nodes = farm_nodes();
+        nodes[0].is_home = false;
+        nodes[0].is_pinned = true;
+        let map = NamingMap::new(settings(), nodes, farm_edges());
+        assert_eq!(bookmark(&map, 2, 4), "*1 ABC C5");
+    }
+
+    #[test]
+    fn a_pin_out_in_homes_chain_is_not_a_way_back() {
+        let mut nodes = farm_nodes();
+        nodes[3].is_pinned = true;
+        let map = NamingMap::new(settings(), nodes, farm_edges());
+        assert_eq!(bookmark(&map, 4, 2), "1 ABC C6");
     }
 
     #[test]

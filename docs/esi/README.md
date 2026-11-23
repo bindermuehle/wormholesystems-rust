@@ -40,6 +40,14 @@ full [openapi.json](https://esi.evetech.net/meta/openapi.json).
 
 - [Set autopilot waypoint](./ui-autopilot-waypoint.md) — `esi-ui.write_waypoint.v1`
 
+**Structures** — authenticated, optional scopes; feed the
+[structure watch](../processes.md#structure-watch):
+
+- `GET /characters/{id}/notifications` — `esi-characters.read_notifications.v1`. Cached
+  10 minutes, 15 tokens per 15 minutes per character.
+- `GET /corporations/{id}/structures` — `esi-corporations.read_structures.v1`, paged.
+  Cached an hour; 403 without the Station Manager role.
+
 **Public lookups** — no token; resolve names and keep access-driving affiliations
 fresh:
 
@@ -62,5 +70,12 @@ catalogue and are what we ask for at SSO consent:
 - `esi-location.read_ship_type.v1` — current ship
 - `esi-location.read_online.v1` — online state
 - `esi-ui.write_waypoint.v1` — set autopilot waypoint
+
+Optional, granted one at a time from the characters settings page and never asked for at
+sign-in:
+
+- `esi-universe.read_structures.v1` — names the structure a pilot is docked in
+- `esi-characters.read_notifications.v1` — structure attacks and fuel warnings
+- `esi-corporations.read_structures.v1` — structure fuel timers
 
 The public lookups need **no** scope.

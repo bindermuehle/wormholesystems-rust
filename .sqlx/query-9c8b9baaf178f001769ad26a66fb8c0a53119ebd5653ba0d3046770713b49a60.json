@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "delete from corporation_structure_readers where character_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9c8b9baaf178f001769ad26a66fb8c0a53119ebd5653ba0d3046770713b49a60"
+}

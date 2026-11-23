@@ -14,6 +14,7 @@ use super::{DesktopApp, Level, Page, Updater};
 use crate::config::{Corner, Overlay, OverlaySize};
 use crate::focus::{self, Focus};
 use crate::hotkeys::{self, Action, PICK_MODIFIERS};
+use crate::overlay;
 use crate::sigs;
 use crate::theme::{self, Appearance, HEADING};
 use crate::ui::{self, ButtonState, Kind, rpx};
@@ -906,6 +907,7 @@ impl DesktopApp {
                     }))
                     .into_any_element(),
             ))
+            .children(Self::overlay_monitors(&o, theme, cx))
             .child(setting_row(
                 "Text size",
                 segmented("overlay-text-size", TEXT_SIZES, o.text_size, cx, |this, v, _, cx| {
@@ -965,6 +967,54 @@ impl DesktopApp {
             overlay = self.overlay_characters(overlay, &o, theme, cx);
         }
         overlay
+    }
+
+    /// Which monitor the overlay is on, when there is more than one to pick from.
+    fn overlay_monitors(o: &Overlay, theme: &Theme, cx: &mut Context<'_, Self>) -> Option<Div> {
+        let monitors = overlay::monitors(cx);
+        if monitors.len() < 2 && o.monitor.is_none() {
+            return None;
+        }
+        let kind = |picked: bool| if picked { Kind::Selected } else { Kind::Normal };
+        let mut chips = div().flex().flex_wrap().justify_end().gap_1().child(
+            ui::button(
+                "overlay-monitor-any",
+                "Automatic",
+                kind(o.monitor.is_none()),
+                ButtonState::Enabled,
+                theme,
+            )
+            .on_click(cx.listener(|this, _, _, cx| this.edit_overlay(cx, |o| o.monitor = None))),
+        );
+        let missing = o
+            .monitor
+            .as_ref()
+            .is_some_and(|key| monitors.iter().all(|m| m.key != *key));
+        for (i, monitor) in monitors.into_iter().enumerate() {
+            let key = monitor.key;
+            chips = chips.child(
+                ui::button(
+                    ElementId::from(("overlay-monitor", i)),
+                    monitor.label,
+                    kind(o.monitor.as_ref() == Some(&key)),
+                    ButtonState::Enabled,
+                    theme,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let key = key.clone();
+                    this.edit_overlay(cx, |o| o.monitor = Some(key));
+                })),
+            );
+        }
+        let row = setting_row("Monitor", chips.into_any_element());
+        Some(if missing {
+            div().flex().flex_col().gap_2().child(row).child(muted(
+                "The monitor it was put on is not connected, so it is on another until that one is back.",
+                theme,
+            ))
+        } else {
+            row
+        })
     }
 
     /// Which characters' clients the overlay shows for, added to its `panel`.

@@ -9,11 +9,16 @@ use sqlx::PgPool;
 pub struct UserPreferences {
     /// The game's icon on a wormhole effect badge; off shows the effect's letter instead.
     pub effect_icons: bool,
+    /// The route drawn next to a jump count in the lists, a mark per system on the way.
+    pub route_previews: bool,
 }
 
 impl Default for UserPreferences {
     fn default() -> Self {
-        UserPreferences { effect_icons: true }
+        UserPreferences {
+            effect_icons: true,
+            route_previews: true,
+        }
     }
 }
 
@@ -24,13 +29,16 @@ pub struct UpdateUserPreferences {
     #[serde(default)]
     #[ts(optional)]
     pub effect_icons: Option<bool>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub route_previews: Option<bool>,
 }
 
 /// The user's preferences, the defaults until they change one.
 pub async fn get(pool: &PgPool, user_id: i64) -> Result<UserPreferences, sqlx::Error> {
     let row = sqlx::query_as!(
         UserPreferences,
-        "select effect_icons from user_preferences where user_id = $1",
+        "select effect_icons, route_previews from user_preferences where user_id = $1",
         user_id,
     )
     .fetch_optional(pool)
@@ -47,15 +55,18 @@ pub async fn update(
     let defaults = UserPreferences::default();
     sqlx::query_as!(
         UserPreferences,
-        "insert into user_preferences (user_id, effect_icons)
-         values ($1, coalesce($2::bool, $3))
+        "insert into user_preferences (user_id, effect_icons, route_previews)
+         values ($1, coalesce($2::bool, $3), coalesce($4::bool, $5))
          on conflict (user_id) do update set
              effect_icons = coalesce($2::bool, user_preferences.effect_icons),
+             route_previews = coalesce($4::bool, user_preferences.route_previews),
              updated_at = now()
-         returning effect_icons",
+         returning effect_icons, route_previews",
         user_id,
         change.effect_icons,
         defaults.effect_icons,
+        change.route_previews,
+        defaults.route_previews,
     )
     .fetch_one(pool)
     .await

@@ -13,6 +13,7 @@
 	import * as Select from '$lib/components/ui/select';
 	import DestinationMenu from '../../system-menu/DestinationMenu.svelte';
 	import SystemMenu from '../../system-menu/SystemMenu.svelte';
+	import SystemMenuButton from '../../system-menu/SystemMenuButton.svelte';
 	import EveImage from '$lib/components/EveImage.svelte';
 	import SystemRow from '../../pickers/SystemRow.svelte';
 	import { SYSTEM_CELLS_4, SYSTEM_LIST_ACTIONS, SYSTEM_ROW } from '../../pickers/columns';
@@ -293,21 +294,24 @@
 						{result.jumps}j
 					</span>
 				</RoutePopover>
-				{#if expandable}
-					<span
-						class="flex items-center gap-0.5 text-[10px] text-muted-foreground"
-						data-testid="find-stations-indicator"
-					>
-						{#if expandedFind.has(result.id)}
-							<ChevronDownIcon class="size-3" />
-						{:else}
-							<ChevronRightIcon class="size-3" />
-						{/if}
-						{stations.length}
-					</span>
-				{:else}
-					<span></span>
-				{/if}
+				<span class="flex items-center justify-end gap-1.5">
+					{#if expandable}
+						<span
+							class="flex items-center gap-0.5 text-[10px] text-muted-foreground"
+							data-testid="find-stations-indicator"
+						>
+							{#if expandedFind.has(result.id)}
+								<ChevronDownIcon class="size-3" />
+							{:else}
+								<ChevronRightIcon class="size-3" />
+							{/if}
+							{stations.length}
+						</span>
+					{/if}
+					{#if r}
+						<SystemMenu system={r}><SystemMenuButton name={r.name} /></SystemMenu>
+					{/if}
+				</span>
 			</div>
 			{#if expandedFind.has(result.id)}
 				{#each stations as station (station.id)}

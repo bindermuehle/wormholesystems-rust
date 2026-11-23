@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update map_alerts set\n             name = $3, kind = $4, delivery = $5, map_webhook_id = $6,\n             discord_guild_id = $7, discord_channel_id = $8, map_webhook_role_id = $9,\n             mention = $10, target_solar_system_id = $11, origin_solar_system_id = $12,\n             max_jumps = $13, ship_type = $14, jdc_level = $15,\n             filters = $16, filter_match = $17, fuel_days = $18,\n             structure_events = $19, updated_at = now()\n         where id = $1 and map_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Int8",
+        "Text",
+        "Text",
+        "Int8",
+        "Text",
+        "Int8",
+        "Int8",
+        "Int4",
+        "Text",
+        "Int4",
+        "Jsonb",
+        "Text",
+        "Int4",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dd92d4160025e78d1e24addf57e7118ebbba64a889fbb2ffc700c7c3b5cb34f1"
+}

@@ -25,6 +25,7 @@ pub mod naming;
 pub mod reference;
 pub mod search;
 pub mod signatures;
+pub mod structures;
 pub mod systems;
 pub mod tokens;
 pub mod tracking;
@@ -280,8 +281,9 @@ Live updates go over WebSockets, which this document cannot describe: see \
         (name = "watchlist", description = "Systems a map keeps an eye on for routing: the list, adding and removing entries, and pinning the ones that matter most."),
         (name = "ignored systems", description = "Systems the whole map routes around and never auto-places, kept on the server so route planning, Discord routes and alerts all agree. Manager only."),
         (name = "eve scout", description = "The public holes out of Thera and Turnur as EVE Scout's scouts report them, and putting one hub's connections on the map in one step."),
-        (name = "alerts", description = "What a map watches for and where it tells people: proximity, killmail and jump-range alerts, their delivery to Discord channels or DMs, the roles that can be mentioned, and the webhooks a map posts to."),
+        (name = "alerts", description = "What a map watches for and where it tells people: proximity, killmail, jump-range and structure alerts, their delivery to Discord channels or DMs, the roles that can be mentioned, and the webhooks a map posts to."),
         (name = "killmails", description = "Recent kills in and around the chain, as the map's killmail feed shows them."),
+        (name = "structures", description = "The structures a map's members share with it: attacks and fuel warnings from their in-game notifications, and the fuel timers of their corporations' Upwell structures."),
         (name = "search", description = "Searching within one map: systems, aliases, signatures and notes in one query."),
         (name = "transfer", description = "Moving a map between instances: export to a file, import into an existing map, or create a new map from a file. The format is the one the legacy app reads and writes."),
         (name = "user settings", description = "One person's preferences on one map: routing tolerances, what the tracker does for them, which panels are shown and where. Nothing here affects other viewers."),
@@ -342,6 +344,7 @@ fn areas() -> OpenApiRouter<AppState> {
         .merge(access::routes())
         .merge(history::routes())
         .merge(killmails::routes())
+        .merge(structures::routes())
         .merge(tracking::routes())
         .merge(user_settings::routes())
         .merge(background_image::routes())

@@ -25,3 +25,7 @@ For the smoothest workflow, also enable **Prompt for Signature** in **Map settin
 With both settings on, mapping and bookmarking become almost a single motion: jump, pick the signature, paste the bookmark.
 
 Suggested aliases fill gaps first: if home's holes are `1`, `3` and `4` because the `2` was rolled and deleted, the next hole is suggested as `2` rather than `5`.
+
+## Separate chains
+
+Each chain that hangs off a root of its own is numbered apart from the others. A root is a home system or a [pinned](/documentation/organizing-your-map/pinning-and-ignore-list) one. So with two pinned systems whose chains don't touch, the first hole out of each is `1` (or `A`), even though the other chain already has one. Once the two chains connect they are one chain, and the next suggestion stays clear of every alias in it.

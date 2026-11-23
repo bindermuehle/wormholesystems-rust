@@ -114,6 +114,7 @@ async fn old_alert_history_and_expired_sessions_go() {
             deliveries: 0,
             alert_events: 1,
             sessions: 1,
+            structure_events: 0,
         }
     );
     let sessions: Vec<String> = sqlx::query_scalar("select id_hash from sessions")

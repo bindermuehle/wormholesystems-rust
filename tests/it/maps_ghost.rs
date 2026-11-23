@@ -80,6 +80,34 @@ async fn a_ghost_is_a_placement_with_no_system_hanging_off_the_scan() {
 }
 
 #[tokio::test]
+async fn a_ghost_is_never_abyssal_space() {
+    let (pool, _db) = common::db::fresh().await;
+    let w = world(&pool).await;
+    place(&pool, w.owner, w.map_id, SYS_A).await;
+    ghosting(&pool, w.owner, w.map_id).await;
+    let sig = scan(&pool, w.owner, w.map_id, SYS_A, "ABC-123").await;
+    let ghost = ghost_for(&pool, w.map_id, sig).await;
+    sqlx::query("update solar_systems set wormhole_class_id = 22 where id = $1")
+        .bind(SYS_B)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let err = resolve_ghost_system(
+        &pool,
+        w.owner,
+        ResolveGhostSystem {
+            map_id: w.map_id,
+            map_solar_system_id: ghost,
+            solar_system_id: Some(SYS_B),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert!(matches!(err, Err(MapError::Validation(_))), "got {err:?}");
+}
+
+#[tokio::test]
 async fn resolving_names_the_ghost_and_keeps_where_it_sits() {
     let (pool, _db) = common::db::fresh().await;
     let w = world(&pool).await;
@@ -233,6 +261,109 @@ async fn a_ghost_for_a_hole_already_mapped_folds_into_it() {
         "the ghost is back"
     );
     assert_eq!(view.connections.len(), 2);
+    assert_eq!(ghost_for(&pool, w.map_id, sig).await, ghost);
+}
+
+/// Two holes out of one system can lead to the same place. The edge the first signature
+/// is stays that signature's, and the second gets its own beside it.
+#[tokio::test]
+async fn a_second_hole_to_the_same_system_keeps_its_own_edge() {
+    let (pool, _db) = common::db::fresh().await;
+    let w = world(&pool).await;
+    let home = place(&pool, w.owner, w.map_id, SYS_A).await;
+    ghosting(&pool, w.owner, w.map_id).await;
+    let resolve = |ghost| {
+        resolve_ghost_system(
+            &pool,
+            w.owner,
+            ResolveGhostSystem {
+                map_id: w.map_id,
+                map_solar_system_id: ghost,
+                solar_system_id: Some(SYS_C),
+                ..Default::default()
+            },
+        )
+    };
+
+    let first = scan(&pool, w.owner, w.map_id, SYS_A, "ABC-123").await;
+    let far = resolve(ghost_for(&pool, w.map_id, first).await)
+        .await
+        .unwrap()
+        .id;
+    let second = scan(&pool, w.owner, w.map_id, SYS_A, "DEF-456").await;
+    let ghost = ghost_for(&pool, w.map_id, second).await;
+    assert_eq!(resolve(ghost).await.unwrap().id, far);
+
+    let view = get_map(&pool, w.owner, GetMap { map_id: w.map_id })
+        .await
+        .unwrap();
+    assert_eq!(view.systems.len(), 2, "the ghost is gone");
+    assert_eq!(view.connections.len(), 2, "one edge per hole");
+    for connection in &view.connections {
+        let ends = [connection.from_system, connection.to_system];
+        assert!(ends.contains(&home) && ends.contains(&far));
+    }
+    let sigs = list_signatures(&pool, w.owner, w.map_id).await.unwrap();
+    let edge_of = |pk| sigs.iter().find(|s| s.id == pk).unwrap().connection_id;
+    assert!(edge_of(first).is_some(), "the first hole kept its scan");
+    assert!(edge_of(second).is_some());
+    assert_ne!(edge_of(first), edge_of(second));
+
+    undo(&pool, w.owner, MapIdBody { map_id: w.map_id })
+        .await
+        .unwrap();
+    assert_eq!(ghost_for(&pool, w.map_id, second).await, ghost);
+}
+
+/// Saying where an unmapped hole leads says which class its K162 was all along.
+#[tokio::test]
+async fn resolving_a_hole_names_the_class_its_k162_leads_to() {
+    use common::catalog::{K162_C1_TO_3, K162_C2, seed_catalog, seed_wormhole_system};
+
+    const C2: i64 = 31_000_002;
+    let (pool, _db) = common::db::fresh().await;
+    let w = world(&pool).await;
+    seed_catalog(&pool).await;
+    seed_wormhole_system(&pool, C2, 2).await;
+    place(&pool, w.owner, w.map_id, SYS_A).await;
+    ghosting(&pool, w.owner, w.map_id).await;
+    let sig = scan(&pool, w.owner, w.map_id, SYS_A, "ABC-123").await;
+    update_signature(
+        &pool,
+        w.owner,
+        UpdateSignature {
+            map_id: w.map_id,
+            signature_pk: sig,
+            signature_type_id: Some(Some(K162_C1_TO_3)),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let ghost = ghost_for(&pool, w.map_id, sig).await;
+    let type_of = async || {
+        let sigs = list_signatures(&pool, w.owner, w.map_id).await.unwrap();
+        sigs.iter().find(|s| s.id == sig).unwrap().signature_type_id
+    };
+
+    resolve_ghost_system(
+        &pool,
+        w.owner,
+        ResolveGhostSystem {
+            map_id: w.map_id,
+            map_solar_system_id: ghost,
+            solar_system_id: Some(C2),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(type_of().await, Some(K162_C2));
+
+    undo(&pool, w.owner, MapIdBody { map_id: w.map_id })
+        .await
+        .unwrap();
+    assert_eq!(type_of().await, Some(K162_C1_TO_3));
     assert_eq!(ghost_for(&pool, w.map_id, sig).await, ghost);
 }
 

@@ -26,6 +26,7 @@ pub mod server_status;
 pub mod session;
 pub mod skyhooks;
 pub mod sovereignty;
+pub mod structure_watch;
 pub mod structures;
 pub mod telemetry;
 pub mod tokens;

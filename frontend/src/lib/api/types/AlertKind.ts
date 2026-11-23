@@ -3,4 +3,4 @@
 /**
  * What an alert watches for.
  */
-export type AlertKind = "killmail" | "proximity" | "jump_range";
+export type AlertKind = "killmail" | "proximity" | "jump_range" | "structure_attack" | "structure_fuel";

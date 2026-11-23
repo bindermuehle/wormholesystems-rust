@@ -266,6 +266,46 @@ async fn jumping_a_connection_that_is_already_mapped_only_links_the_signature() 
     );
 }
 
+/// Two holes out of one system to the same place: the jump through the second names a
+/// different signature than the one the mapped connection is, so it draws its own.
+#[tokio::test]
+async fn jumping_a_second_hole_to_the_same_system_draws_its_own_connection() {
+    let (pool, _db) = common::db::fresh().await;
+    let w = world(&pool).await;
+    let a = place_at(&pool, w.owner, w.map_id, SYS_A, 0.0).await;
+    let first = scan(&pool, w.owner, w.map_id, SYS_A, "ABC-123").await;
+    let second = scan(&pool, w.owner, w.map_id, SYS_A, "DEF-456").await;
+    let through = |signature| TrackJump {
+        signature_pk: Some(signature),
+        ..jump(w.map_id, a, SYS_B)
+    };
+    track_jump(&pool, w.owner, through(first)).await.unwrap();
+    track_jump(&pool, w.owner, through(second)).await.unwrap();
+
+    assert_eq!(connections(&pool, w.owner, w.map_id).await, 2);
+    assert_eq!(systems(&pool, w.owner, w.map_id).await.len(), 2);
+    let sigs = list_signatures(&pool, w.owner, w.map_id).await.unwrap();
+    let edge_of = |pk| sigs.iter().find(|s| s.id == pk).unwrap().connection_id;
+    assert!(
+        edge_of(first).is_some(),
+        "the first hole kept its signature"
+    );
+    assert!(edge_of(second).is_some());
+    assert_ne!(edge_of(first), edge_of(second));
+
+    // Flying either again changes nothing: each signature already is its connection.
+    track_jump(&pool, w.owner, through(second)).await.unwrap();
+    track_jump(&pool, w.owner, through(first)).await.unwrap();
+    assert_eq!(connections(&pool, w.owner, w.map_id).await, 2);
+    let again = list_signatures(&pool, w.owner, w.map_id).await.unwrap();
+    for pk in [first, second] {
+        assert_eq!(
+            again.iter().find(|s| s.id == pk).unwrap().connection_id,
+            edge_of(pk)
+        );
+    }
+}
+
 #[tokio::test]
 async fn flying_a_stargate_builds_nothing() {
     let (pool, _db) = common::db::fresh().await;
@@ -294,6 +334,23 @@ async fn flying_a_stargate_builds_nothing() {
 
     let err = track_jump(&pool, w.owner, jump(w.map_id, a, SYS_C)).await;
     assert!(matches!(err, Err(MapError::Conflict(_))));
+    assert_eq!(connections(&pool, w.owner, w.map_id).await, 0);
+}
+
+#[tokio::test]
+async fn a_filament_into_abyssal_space_builds_nothing() {
+    let (pool, _db) = common::db::fresh().await;
+    let w = world(&pool).await;
+    let a = place_at(&pool, w.owner, w.map_id, SYS_A, 0.0).await;
+    sqlx::query("update solar_systems set wormhole_class_id = 21 where id = $1")
+        .bind(SYS_C)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let err = track_jump(&pool, w.owner, jump(w.map_id, a, SYS_C)).await;
+    assert!(matches!(err, Err(MapError::Validation(_))), "got {err:?}");
+    assert_eq!(systems(&pool, w.owner, w.map_id).await.len(), 1);
     assert_eq!(connections(&pool, w.owner, w.map_id).await, 0);
 }
 
@@ -440,4 +497,70 @@ async fn a_desktop_app_holds_the_characters_it_watches() {
         .unwrap();
     assert_eq!(mine(characters::list(&pool, w.owner).await.unwrap()), None);
     assert!(heard.try_recv().is_ok());
+}
+
+async fn placement_of(pool: &PgPool, actor: Actor, map_id: i64, sys: i64) -> i64 {
+    get_map(pool, actor, GetMap { map_id })
+        .await
+        .expect("get_map")
+        .systems
+        .iter()
+        .find(|s| s.solar_system_id() == Some(sys))
+        .expect("the system is on the map")
+        .id()
+}
+
+#[tokio::test]
+async fn a_jump_that_says_no_size_takes_the_one_its_ends_allow() {
+    let (pool, _db) = common::db::fresh().await;
+    let w = world(&pool).await;
+    let a = place_at(&pool, w.owner, w.map_id, SYS_A, 0.0).await;
+    let (c1, c13, c5) = (31000101, 31000113, 31000105);
+    common::catalog::seed_wormhole_system(&pool, c1, 1).await;
+    common::catalog::seed_wormhole_system(&pool, c13, 13).await;
+    common::catalog::seed_wormhole_system(&pool, c5, 5).await;
+
+    track_jump(&pool, w.owner, jump(w.map_id, a, c1))
+        .await
+        .unwrap();
+    track_jump(&pool, w.owner, jump(w.map_id, a, c13))
+        .await
+        .unwrap();
+    // Nothing about a C5 rules a size out, and what the pilot said is never second-guessed.
+    track_jump(&pool, w.owner, jump(w.map_id, a, c5))
+        .await
+        .unwrap();
+    let c1_placement = placement_of(&pool, w.owner, w.map_id, c1).await;
+    track_jump(
+        &pool,
+        w.owner,
+        TrackJump {
+            size: Some(WormholeSize::Small),
+            ..jump(w.map_id, c1_placement, c5)
+        },
+    )
+    .await
+    .unwrap();
+
+    let view = get_map(&pool, w.owner, GetMap { map_id: w.map_id })
+        .await
+        .unwrap();
+    let size_to = |from: i64, to: i64| {
+        view.connections
+            .iter()
+            .find(|c| c.from_system == from && c.to_system == to)
+            .expect("the connection")
+            .size
+    };
+    let placed = |sys: i64| {
+        view.systems
+            .iter()
+            .find(|s| s.solar_system_id() == Some(sys))
+            .expect("the system")
+            .id()
+    };
+    assert_eq!(size_to(a, placed(c1)), Some(WormholeSize::Medium));
+    assert_eq!(size_to(a, placed(c13)), Some(WormholeSize::Small));
+    assert_eq!(size_to(a, placed(c5)), None);
+    assert_eq!(size_to(c1_placement, placed(c5)), Some(WormholeSize::Small));
 }

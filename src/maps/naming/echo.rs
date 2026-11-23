@@ -42,8 +42,9 @@ pub struct Echo;
 /// What echo reads that the other strategies do not.
 #[derive(Debug, Clone, Default)]
 pub struct EchoFacts {
-    /// The wormhole codes of home's statics.
-    pub home_statics: Vec<String>,
+    /// The wormhole codes of each home system's statics, by solar system. A map can have
+    /// a home per chain.
+    pub home_statics: HashMap<i64, Vec<String>>,
     /// Every wormhole scan on the map.
     pub scans: Vec<Scan>,
 }
@@ -76,6 +77,35 @@ impl EchoFacts {
     fn scan(&self, pk: i64) -> Option<&Scan> {
         self.scans.iter().find(|s| s.pk == pk)
     }
+
+    fn statics_of(&self, home: &Node) -> &[String] {
+        home.system
+            .as_ref()
+            .and_then(|s| self.home_statics.get(&s.solar_system_id))
+            .map_or(&[], Vec::as_slice)
+    }
+}
+
+/// The home of `node`'s chain: the nearest home system it is connected to. A map can hold
+/// a home per chain, and a chain names itself from its own.
+fn home_for(map: &NamingMap, node: i64) -> Option<&Node> {
+    let mut seen: HashSet<i64> = HashSet::from([node]);
+    let mut queue = VecDeque::from([node]);
+    while let Some(current) = queue.pop_front() {
+        let here = map.node(current)?;
+        if here.is_home {
+            return Some(here);
+        }
+        // By id, so a tie between two homes does not depend on the order edges were read in.
+        let mut next: Vec<i64> = map.neighbours(current).map(|n| n.id).collect();
+        next.sort_unstable();
+        for id in next {
+            if seen.insert(id) {
+                queue.push_back(id);
+            }
+        }
+    }
+    None
 }
 
 impl NamingStrategy for Echo {
@@ -116,27 +146,29 @@ fn suggest(
     extra: &[String],
 ) -> Option<String> {
     let kind = type_char(target.class)?;
-    let home = map.nodes().iter().find(|n| n.is_home);
-    let branch = match home {
+    let branch = match home_for(map, origin.id) {
         Some(home) if home.id == origin.id => {
             let used = home_branch_letters(map, home.id, skip);
             if is_home_static(map, origin, target.signature) {
                 // The static takes the lowest free letter, so the primary static reads `a…s`.
                 return Some(format!("{}{kind}s", next_branch_letter(&used)));
             }
-            let statics = map.echo().home_statics.len().min(BRANCH_LETTERS.len());
+            let statics = map.echo().statics_of(home).len().min(BRANCH_LETTERS.len());
             let mut used = used;
             used.extend(BRANCH_LETTERS[..statics].iter().map(|&b| char::from(b)));
             next_branch_letter(&used)
         }
         _ => branch_of(origin.alias.as_deref())?,
     };
-    let mut aliases: Vec<String> = map
-        .nodes()
-        .iter()
-        .filter(|n| Some(n.id) != skip)
-        .filter_map(|n| n.alias.clone())
-        .collect();
+    // Chains with a root of their own are numbered apart, as upstream's strategies do.
+    let mut aliases = map.aliases_seen_from(origin.id);
+    if let Some(own) = skip
+        .and_then(|id| map.node(id))
+        .and_then(|n| n.alias.as_ref())
+        && let Some(at) = aliases.iter().position(|a| a == own)
+    {
+        aliases.swap_remove(at);
+    }
     aliases.extend_from_slice(extra);
     let slot = next_slot_letter(branch, &kind, &aliases)?;
     Some(format!("{branch}{kind}{slot}"))
@@ -222,7 +254,7 @@ fn is_home_static(map: &NamingMap, home: &Node, signature: Option<i64>) -> bool 
         return false;
     };
     if scan.solar_system_id != system.solar_system_id
-        || !facts.home_statics.iter().any(|s| s == code)
+        || !facts.statics_of(home).iter().any(|s| s == code)
     {
         return false;
     }
@@ -236,23 +268,27 @@ fn is_home_static(map: &NamingMap, home: &Node, signature: Option<i64>) -> bool 
 
 /// The facts for map `map_id`, whose graph is `map`.
 pub(super) async fn load_facts(pool: &PgPool, map_id: i64, map: &NamingMap) -> Result<EchoFacts> {
-    let home_system = map
+    let homes: Vec<i64> = map
         .nodes()
         .iter()
-        .find(|n| n.is_home)
-        .and_then(|n| n.system.as_ref())
-        .map(|s| s.solar_system_id);
-    let home_statics = match home_system {
-        Some(id) => {
-            sqlx::query_scalar!(
-                "select wormhole_code from wormhole_system_statics where solar_system_id = $1",
-                id,
-            )
-            .fetch_all(pool)
-            .await?
-        }
-        None => Vec::new(),
-    };
+        .filter(|n| n.is_home)
+        .filter_map(|n| n.system.as_ref())
+        .map(|s| s.solar_system_id)
+        .collect();
+    let mut home_statics: HashMap<i64, Vec<String>> = HashMap::new();
+    for row in sqlx::query!(
+        "select solar_system_id, wormhole_code from wormhole_system_statics
+         where solar_system_id = any($1)",
+        &homes,
+    )
+    .fetch_all(pool)
+    .await?
+    {
+        home_statics
+            .entry(row.solar_system_id)
+            .or_default()
+            .push(row.wormhole_code);
+    }
     let scans = sqlx::query!(
         r#"select s.id, s.solar_system_id, s.signature_id, st.signature as "code?",
                   st.target_class as "target_class?", s.connection_id, s.created_at
@@ -388,11 +424,11 @@ fn row_aliases(map: &NamingMap, origin: &Node) -> Vec<EchoRowAlias> {
 }
 
 /// The neighbour one hop closer to home: `node`'s parent in a breadth-first walk from the
-/// map's home system. The hole to it is the way back, which the signature list marks with
+/// home of its chain. The hole to it is the way back, which the signature list marks with
 /// a `+`. One parent, so a loop in the chain still marks a single hole. `None` with no home,
 /// at home, or with no path to it.
 fn parent_toward_home(map: &NamingMap, node: i64) -> Option<i64> {
-    let home = map.nodes().iter().find(|n| n.is_home)?.id;
+    let home = home_for(map, node)?.id;
     let mut parent: HashMap<i64, i64> = HashMap::new();
     let mut seen: HashSet<i64> = HashSet::from([home]);
     let mut queue = VecDeque::from([home]);
@@ -561,6 +597,7 @@ mod tests {
             id: 1,
             alias: None,
             is_home: true,
+            is_pinned: false,
             system: Some(system(HOME_SYSTEM, 5)),
         }
     }
@@ -570,6 +607,7 @@ mod tests {
             id,
             alias: Some(alias.into()),
             is_home: false,
+            is_pinned: false,
             system: Some(system(31_000_000 + id, 3)),
         }
     }
@@ -579,6 +617,7 @@ mod tests {
             id,
             alias: alias.map(Into::into),
             is_home: false,
+            is_pinned: false,
             system: None,
         }
     }
@@ -608,7 +647,10 @@ mod tests {
 
     fn map(nodes: Vec<Node>, edges: Vec<Edge>, statics: &[&str], scans: Vec<Scan>) -> NamingMap {
         NamingMap::new(settings(), nodes, edges).with_echo(EchoFacts {
-            home_statics: statics.iter().map(ToString::to_string).collect(),
+            home_statics: HashMap::from([(
+                HOME_SYSTEM,
+                statics.iter().map(ToString::to_string).collect(),
+            )]),
             scans,
         })
     }
@@ -784,6 +826,57 @@ mod tests {
         assert_eq!(
             Echo.alias(&m, &origin, &wormhole(5, Some(10))).as_deref(),
             Some("a5a")
+        );
+    }
+
+    #[test]
+    fn each_chain_is_named_from_its_own_home() {
+        // Two chains that do not touch, each with a home. First: HOME (static H296) - a5s -
+        // a5a. Second: a C3 home (static D845) - a3s.
+        let mut second = node(10, "Second");
+        second.is_home = true;
+        second.alias = None;
+        let nodes = vec![
+            home(),
+            node(2, "a5s"),
+            node(3, "a5a"),
+            second,
+            node(11, "a3s"),
+        ];
+        let edges = vec![edge(1, 1, 2), edge(2, 2, 3), edge(3, 10, 11)];
+        let in_second_home = |pk: i64, code: &str, class: i32| {
+            let mut s = scan(pk, code, class, 0, None);
+            s.solar_system_id = 31_000_010;
+            s
+        };
+        let mut m = map(
+            nodes,
+            edges,
+            &["H296"],
+            vec![in_second_home(20, "D845", 3), in_second_home(21, "H296", 5)],
+        );
+        let mut facts = m.echo().clone();
+        facts.home_statics.insert(31_000_010, vec!["D845".into()]);
+        m = m.with_echo(facts);
+        let second_home = m.node(10).unwrap().clone();
+
+        assert_eq!(
+            Echo.alias(&m, &second_home, &wormhole(3, Some(20)))
+                .as_deref(),
+            Some("b3s"),
+            "the second home's own static takes the s slot, on the first free branch"
+        );
+        assert_eq!(
+            Echo.alias(&m, &second_home, &wormhole(5, Some(21)))
+                .as_deref(),
+            Some("b5a"),
+            "the first home's static code is just a hole in the second home"
+        );
+        let in_second = m.node(11).unwrap().clone();
+        assert_eq!(
+            Echo.alias(&m, &in_second, &wormhole(5, None)).as_deref(),
+            Some("a5a"),
+            "the other chain's a5a does not count against this one"
         );
     }
 

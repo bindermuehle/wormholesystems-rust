@@ -13,6 +13,8 @@ import type { MapView } from '$lib/api/types/MapView';
 import type { GridConfig } from '$lib/api/types/GridConfig';
 import type { Signature } from '$lib/api/types/Signature';
 import { MAP_ACTIONS, type MapAction } from '$lib/map/actions';
+import { atLeast } from '$lib/map/roles';
+import { aggressorLabel, eventMeta, eventSentence, fresh } from '$lib/map/structures';
 import { createBackgroundImageWriter, createUserSettingsWriter } from '$lib/map/user-settings';
 import { createCoalescer } from './coalesce';
 import { keysFor } from './invalidations';
@@ -87,6 +89,30 @@ export function createMapQueries(
 		refetchInterval: 120_000,
 		refetchIntervalInBackground: true,
 	}));
+	// What members share of their structures is for members: a viewer is not asked, since
+	// the answer would only be a refusal.
+	const structures = createQuery(() => ({
+		...q.mapStructures(mapId),
+		enabled: signedIn && atLeast(graph.data?.role, 'member'),
+	}));
+	// An attack is worth interrupting for whether or not the card is on screen. The first
+	// load is what was already there; after it, anything new that only just happened.
+	let seenEvents: Set<number> | null = null;
+	$effect(() => {
+		const events = structures.data?.events;
+		if (!events) return;
+		for (const event of fresh(events, seenEvents, new Date())) {
+			const notify = { attack: toast.error, fuel: toast.warning, routine: toast.info }[
+				eventMeta(event.kind).tone
+			];
+			notify(eventSentence(event), {
+				description:
+					[event.system_name, aggressorLabel(event)].filter(Boolean).join(' · ') || undefined,
+				duration: 15_000,
+			});
+		}
+		seenEvents = new Set(events.map((event) => event.id));
+	});
 	const grid = createQuery(() => q.gridConfig());
 	const eveScout = createQuery(() => q.eveScout());
 	// The focus trigger lives in the map session (a window listener), not here: the jump
@@ -138,6 +164,7 @@ export function createMapQueries(
 		characters,
 		grid,
 		eveScout,
+		structures,
 		myCharacters,
 		write,
 		settingsWriter,

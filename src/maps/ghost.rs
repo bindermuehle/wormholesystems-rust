@@ -16,6 +16,7 @@ use sqlx::PgPool;
 use super::command::{CommandOutput, Effect, MapCommand, Sequence, Tx, run};
 use super::connection::{AddConnection, SetConnectionStatus};
 use super::error::{MapError, Result};
+use super::naming::bookmark::is_abyssal_class;
 use super::solar_system::{MapSolarSystem, SetAlias};
 use super::store::placements::{self, NewPlacement, PlacementRow};
 use super::{Actor, ConnectionType, MassStatus, TimeStatus, WormholeSize};
@@ -451,13 +452,18 @@ pub(super) async fn apply_resolve_ghost_system(
         return Err(MapError::Validation("that node is already a system".into()));
     }
 
-    let name = sqlx::query_scalar!(
-        "select name from solar_systems where id = $1",
+    let system = sqlx::query!(
+        "select name, wormhole_class_id from solar_systems where id = $1",
         solar_system_id
     )
     .fetch_optional(&mut **tx)
     .await?
     .ok_or_else(|| MapError::Validation(format!("unknown solar system {solar_system_id}")))?;
+    let name = system.name;
+    // No hole leads there, so no unmapped hole turns out to be one.
+    if is_abyssal_class(system.wormhole_class_id) {
+        return Err(MapError::Validation(format!("{name} is abyssal space")));
+    }
 
     let existing = sqlx::query_scalar!(
         "select id from map_solar_systems where map_id = $1 and solar_system_id = $2",
@@ -473,7 +479,8 @@ pub(super) async fn apply_resolve_ghost_system(
         Some(target) => twin_of(tx, cmd.map_id, cmd.map_solar_system_id, target).await?,
         None => None,
     };
-    let (undo, events) = carry_details(tx, &cmd, surviving, twin.map(|t| t.existing)).await?;
+    let (mut undo, mut events) =
+        carry_details(tx, &cmd, surviving, twin.map(|t| t.existing)).await?;
 
     let effect = if let (Some(target), Some(twin)) = (existing, twin) {
         fold(tx, cmd.map_id, cmd.map_solar_system_id, target, twin, &name).await
@@ -507,6 +514,16 @@ pub(super) async fn apply_resolve_ghost_system(
             map_solar_system_id: cmd.map_solar_system_id,
         }))
     }?;
+
+    // Where the hole leads is known now, which can say more than its signature's type did.
+    let (retyped, announced) = super::signatures::narrow_types(
+        tx,
+        cmd.map_id,
+        super::signatures::Narrow::Placement(surviving),
+    )
+    .await?;
+    undo.extend(retyped);
+    events.extend(announced);
 
     Ok(with_undo_steps(cmd.map_id, undo, effect).emit_all(events))
 }
@@ -659,6 +676,10 @@ struct Twin {
 
 /// The ghost's edge that merging it into `target` would duplicate. That happens when the
 /// same jump is mapped twice at once, once as a new system and once as this ghost.
+///
+/// An edge that another signature in the system the ghost hangs off already is, is not
+/// that: two signatures there are two holes, which can lead to the same system, so the
+/// ghost's edge stays a second one beside it.
 async fn twin_of(tx: &mut Tx<'_>, map_id: i64, ghost_id: i64, target: i64) -> Result<Option<Twin>> {
     let row = sqlx::query!(
         r#"select c.id as ghost, d.id as existing
@@ -669,6 +690,13 @@ async fn twin_of(tx: &mut Tx<'_>, map_id: i64, ghost_id: i64, target: i64) -> Re
                 (case when c.from_system = $2 then c.to_system else c.from_system end, $3),
                 ($3, case when c.from_system = $2 then c.to_system else c.from_system end))
            where c.map_id = $1 and $2 in (c.from_system, c.to_system)
+             and not exists (
+                 select 1
+                 from signatures s
+                 join map_solar_systems origin
+                   on origin.id = case when c.from_system = $2 then c.to_system else c.from_system end
+                 where s.map_id = d.map_id and s.connection_id = d.id
+                   and s.solar_system_id = origin.solar_system_id)
            order by c.id, d.id
            limit 1"#,
         map_id,

@@ -1,6 +1,6 @@
 // Building the chain as you fly it. Watching the active character's system is the whole
 // trick, and every guard here exists because something other than a jump also changes that
-// number: switching character, logging in, taking a gate. Anything ambiguous is dropped
+// number: switching character, logging in, taking a gate, running a filament. Anything ambiguous is dropped
 // rather than guessed at.
 
 import { ghostAliases, ghostsFrom, existingConnection } from '$lib/map/ghosts';
@@ -17,6 +17,7 @@ import type { Signature } from '$lib/api/types/Signature';
 import type { SignatureCatalog } from '$lib/api/types/SignatureCatalog';
 import type { SystemSearchResult } from '$lib/api/types/SystemSearchResult';
 import type { TrackJump } from '$lib/api/types/TrackJump';
+import { isAbyssalClass } from '$lib/map/classes';
 import { freePosition } from '$lib/map/geometry';
 import { sizeForJumpMass } from '$lib/map/mass';
 import { typeById } from '$lib/map/signatures';
@@ -171,6 +172,8 @@ export class JumpTracker {
 		const originSignatures = map.sigs().filter((s) => s.solar_system_id === fromSystemId);
 		const target = await this.describeTarget(toSystemId, existing);
 		if (!target) return;
+		// A filament into abyssal space moves the pilot to another system without any hole.
+		if (isAbyssalClass(target.classId)) return;
 
 		const ghosts = ghostsFrom(origin, map.systems(), map.connections());
 		const groups = groupSignatures(

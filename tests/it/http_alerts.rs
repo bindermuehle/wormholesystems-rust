@@ -281,6 +281,8 @@ async fn a_bot_channel_alert_keeps_its_channel_and_ping_when_edited() {
             max_jumps: 5,
             ship_type: None,
             jdc_level: None,
+            fuel_days: None,
+            structure_events: Vec::new(),
             filters: Vec::new(),
             filter_match: filters::Match::Any,
         },

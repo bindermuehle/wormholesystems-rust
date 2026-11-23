@@ -10,7 +10,11 @@ import type { TimeStatus } from "./TimeStatus";
 /**
  * A user's per-map preferences.
  */
-export type MapUserSettings = { tracking_allowed: boolean, show_threat_level: boolean, compact_signature_list: boolean, show_statics_first: boolean, route_preference: RoutePreference, 
+export type MapUserSettings = { tracking_allowed: boolean, 
+/**
+ * Let this map see the structures of this user's corporations: attacks, and fuel.
+ */
+structures_shared: boolean, show_threat_level: boolean, compact_signature_list: boolean, show_statics_first: boolean, route_preference: RoutePreference, 
 /**
  * 0-100, weight of the security preference (legacy `exp(0.15 * penalty)`).
  */

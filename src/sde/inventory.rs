@@ -81,8 +81,9 @@ pub struct Blueprint {
     #[serde(rename = "_key")]
     pub id: i64,
     pub activities: BlueprintActivities,
+    /// The same as the key. Builds from 3698585 on leave it out.
     #[serde(rename = "blueprintTypeID")]
-    pub blueprint_type_id: i64,
+    pub blueprint_type_id: Option<i64>,
     pub max_production_limit: i32,
 }
 

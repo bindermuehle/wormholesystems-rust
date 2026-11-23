@@ -68,6 +68,7 @@ mod retention;
 mod sentry_tunnel;
 mod skyhooks;
 mod sovereignty;
+mod structure_watch;
 mod threat;
 
 /// A file here that `main.rs` does not declare is never compiled, so its tests would

@@ -19,7 +19,7 @@ import type { Signature } from '$lib/api/types/Signature';
 import type { SignatureCatalog } from '$lib/api/types/SignatureCatalog';
 import type { SignatureGroup } from '$lib/api/types/SignatureGroup';
 import type { SignatureTypeInfo } from '$lib/api/types/SignatureTypeInfo';
-import { destClassMeta } from './classes';
+import { destClassMeta, destIncludes } from './classes';
 
 /**
  * Localized category and site names from the EVE client's localization files, mapped to
@@ -183,6 +183,24 @@ export function typesForCategory(
 	return (named.length > 0 ? named : ofCategory.filter((t) => at === null || spawnsAt(t, at))).sort(
 		(a, b) => destClassMeta(a.target_class).sortWeight - destClassMeta(b.target_class).sortWeight,
 	);
+}
+
+/**
+ * The types that can lead into a system of `targetClass`. A group such as "K162 to C1-3"
+ * is what a hole says from outside; with the class known, the type of the same code that
+ * names it is the answer, so the group is left out wherever that one is on offer.
+ */
+export function typesLeadingTo(
+	types: SignatureTypeInfo[],
+	targetClass: number,
+): SignatureTypeInfo[] {
+	const leading = types.filter(
+		(t) => t.target_class !== null && destIncludes(t.target_class, targetClass),
+	);
+	const exact = new Set(
+		leading.filter((t) => t.target_class === targetClass).map((t) => t.signature),
+	);
+	return leading.filter((t) => t.target_class === targetClass || !exact.has(t.signature));
 }
 
 // One index per catalog object, built on first lookup. The catalog is cached for the whole

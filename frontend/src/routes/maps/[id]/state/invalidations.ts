@@ -18,6 +18,8 @@ export function keysFor(mapId: number, event: MapEvent | null): QueryKey[] {
 			return [key.mapCharacters(mapId)];
 		case 'killmail_received':
 			return [key.killmails(mapId)];
+		case 'structures_changed':
+			return [key.structures(mapId)];
 		case 'watchlist_changed':
 			return [key.watchlist(mapId)];
 		case 'ignored_systems_changed':

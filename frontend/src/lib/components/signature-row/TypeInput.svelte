@@ -13,8 +13,8 @@
 	import { triggerClasses } from '$lib/components/ui/select';
 	import { cn } from '$lib/utils';
 	import { matchesTypeQuery } from '$lib/signatures/type-search';
-	import { destClassMeta, destIncludes } from '$lib/map/classes';
-	import { categoryMeta, typeById, typesForCategory } from '$lib/map/signatures';
+	import { destClassMeta } from '$lib/map/classes';
+	import { categoryMeta, typeById, typesForCategory, typesLeadingTo } from '$lib/map/signatures';
 
 	let {
 		system,
@@ -47,9 +47,7 @@
 			regionId: system.region_id,
 			constellationId: system.constellation_id,
 		});
-		return linkedClass === null
-			? all
-			: all.filter((t) => t.target_class !== null && destIncludes(t.target_class, linkedClass));
+		return linkedClass === null ? all : typesLeadingTo(all, linkedClass);
 	});
 
 	// A static's code can also be scanned outbound, so statics come first, then K162, then
@@ -89,12 +87,9 @@
 	const elsewhere = $derived.by(() => {
 		if (categoryId === null || shown.length > 0 || query.trim() === '') return [];
 		const here = new Set(available.map((t) => t.id));
-		return typesForCategory(catalog, categoryId, null).filter(
-			(t) =>
-				!here.has(t.id) &&
-				(linkedClass === null ||
-					(t.target_class !== null && destIncludes(t.target_class, linkedClass))) &&
-				matchesTypeQuery(t, query),
+		const all = typesForCategory(catalog, categoryId, null);
+		return (linkedClass === null ? all : typesLeadingTo(all, linkedClass)).filter(
+			(t) => !here.has(t.id) && matchesTypeQuery(t, query),
 		);
 	});
 

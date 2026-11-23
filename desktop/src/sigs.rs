@@ -101,6 +101,27 @@ pub(crate) enum PickerKind {
     Menu,
 }
 
+/// The types that can lead into a system of `class`. A group like `C1-3` is what a hole says
+/// from outside; with the class known, the type of the same code that names it is the
+/// answer, so the group is left out wherever that one is on offer.
+fn leading_to(types: Vec<&SignatureType>, class: i64) -> Vec<&SignatureType> {
+    let exact: HashSet<Option<&str>> = types
+        .iter()
+        .filter(|t| t.target_class == Some(class))
+        .map(|t| t.signature.as_deref())
+        .collect();
+    types
+        .into_iter()
+        .filter(|t| match t.target_class {
+            Some(d) if d == class => true,
+            Some(d) => {
+                classes::dest_includes(d, Some(class)) && !exact.contains(&t.signature.as_deref())
+            }
+            None => false,
+        })
+        .collect()
+}
+
 /// How a row names its type: the wormhole code and where it leads, else the site.
 pub(crate) struct TypeLabel {
     pub text: String,
@@ -355,12 +376,10 @@ impl Sigs {
                 Some(s) => t.spawns_in(s),
                 None => true,
             })
-            .filter(|t| {
-                linked.is_none()
-                    || t.target_class
-                        .is_some_and(|d| classes::dest_includes(d, linked))
-            })
             .collect();
+        if let Some(class) = linked {
+            types = leading_to(types, class);
+        }
         types.sort_by_key(|t| theme::dest_sort_weight(t.target_class));
         if sig.group != "wormhole" {
             return vec![(None, types)];
@@ -646,8 +665,7 @@ impl Panel<'_> {
                 let map = sigs
                     .snapshot
                     .as_ref()
-                    .map(|s| format!("{} · ", s.map.name))
-                    .unwrap_or_default();
+                    .map_or_default(|s| format!("{} · ", s.map.name));
                 let sub = format!(
                     "{map}{} · {all} signature{}{hidden}",
                     here.character,
@@ -1820,7 +1838,45 @@ fn ask_option(
 #[cfg(test)]
 mod tests {
     // Not a glob: GPUI has a `test` attribute of its own.
-    use super::{DateTime, ListView, Signature, Sigs, SortColumn, Utc};
+    use super::{
+        DateTime, ListView, Signature, SignatureType, Sigs, SortColumn, Utc, classes, leading_to,
+    };
+
+    fn hole(id: i64, code: &str, target_class: i64) -> SignatureType {
+        SignatureType {
+            id,
+            signature: Some(code.into()),
+            name: code.into(),
+            signature_category_id: 1,
+            target_class: Some(target_class),
+            max_jump_mass: None,
+            extra: None,
+            spawn_areas: Vec::new(),
+            regions: Vec::new(),
+            constellations: Vec::new(),
+            systems: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_known_class_replaces_the_group_of_the_same_code() {
+        let types = [
+            hole(1, "K162", classes::C1_TO_3),
+            hole(2, "K162", 3),
+            hole(3, "K162", 5),
+            hole(4, "X877", classes::C1_TO_3),
+            hole(5, "O477", 3),
+        ];
+        let ids = |class| -> Vec<i64> {
+            leading_to(types.iter().collect(), class)
+                .iter()
+                .map(|t| t.id)
+                .collect()
+        };
+        assert_eq!(ids(3), [2, 4, 5]);
+        // No K162 names a C2 here, so the group stays.
+        assert_eq!(ids(2), [1, 4]);
+    }
 
     fn sig(id: &str, name: Option<&str>) -> Signature {
         Signature {

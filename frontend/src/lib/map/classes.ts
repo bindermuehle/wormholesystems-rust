@@ -109,6 +109,14 @@ export function isWormholeClass(wormholeClassId: number | null): boolean {
 	return wormholeClassId !== null && (CLASSES.get(wormholeClassId)?.isWormholeSpace ?? false);
 }
 
+/**
+ * Classes 19 to 23 are abyssal deadspace and the other instanced pockets: a system to the
+ * game, but nowhere a wormhole leads, so never part of a chain.
+ */
+export function isAbyssalClass(wormholeClassId: number | null): boolean {
+	return wormholeClassId !== null && wormholeClassId >= 19 && wormholeClassId <= 23;
+}
+
 /** Text color for a wormhole effect, matched on keyword. */
 export function effectTextColor(name: string | null | undefined): string {
 	const n = name?.toLowerCase() ?? '';

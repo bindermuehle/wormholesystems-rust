@@ -49,5 +49,20 @@
 				/>
 			{/snippet}
 		</SettingRow>
+		<SettingRow
+			id="route-previews"
+			label="Routes in lists"
+			description="Draws the route next to a jump count in the pilots, watchlist, find, EVE Scout and skyhook lists: one mark per system on the way, in its class colour, when the card is wide enough. Turn it off to see only the number of jumps."
+		>
+			{#snippet control()}
+				<Switch
+					checked={preferences?.route_previews ?? true}
+					disabled={saving || !preferences}
+					aria-label="Routes in lists"
+					data-testid="route-previews-switch"
+					onCheckedChange={(v) => save({ route_previews: v })}
+				/>
+			{/snippet}
+		</SettingRow>
 	</Card.Content>
 </Card.Root>

@@ -1,0 +1,390 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select tracking_allowed, structures_shared, show_threat_level,\n                  compact_signature_list,\n                  show_statics_first,\n                  route_preference,\n                  security_penalty,\n                  route_allow_time_status,\n                  route_allow_mass_status,\n                  route_use_evescout,\n                  route_use_wormholes,\n                  prompt_for_signature, preselect_signature, suggest_alias, copy_bookmark,\n                  follow_character, tracked_character_ids,\n                  killmail_filter,\n                  is_archived,\n                  (introduction_confirmed_at is not null) as \"introduction_confirmed!\",\n                  hidden_panels, layout_breakpoints,\n                  layout_override, is_pinned,\n                  background_image_path,\n                  background_image_mode\n           from map_user_settings where map_id = $1 and user_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "tracking_allowed",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "tracking_allowed"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "structures_shared",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "structures_shared"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "show_threat_level",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "show_threat_level"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "compact_signature_list",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "compact_signature_list"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "show_statics_first",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "show_statics_first"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "route_preference",
+        "type_info": {
+          "Custom": {
+            "name": "route_preference",
+            "kind": {
+              "Enum": [
+                "shorter",
+                "safer",
+                "less_secure"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "route_preference"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "security_penalty",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "security_penalty"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "route_allow_time_status",
+        "type_info": {
+          "Custom": {
+            "name": "time_status",
+            "kind": {
+              "Enum": [
+                "stable",
+                "eol",
+                "critical",
+                "expired"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "route_allow_time_status"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "route_allow_mass_status",
+        "type_info": {
+          "Custom": {
+            "name": "mass_status",
+            "kind": {
+              "Enum": [
+                "stable",
+                "reduced",
+                "critical"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "route_allow_mass_status"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "route_use_evescout",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "route_use_evescout"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "route_use_wormholes",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "route_use_wormholes"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "prompt_for_signature",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "prompt_for_signature"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "preselect_signature",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "preselect_signature"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "suggest_alias",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "suggest_alias"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "copy_bookmark",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "copy_bookmark"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "follow_character",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "follow_character"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "tracked_character_ids",
+        "type_info": "Int8Array",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "tracked_character_ids"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "killmail_filter",
+        "type_info": {
+          "Custom": {
+            "name": "killmail_scope",
+            "kind": {
+              "Enum": [
+                "all",
+                "jspace",
+                "kspace",
+                "selected_system"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "killmail_filter"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "is_archived",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "is_archived"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
+        "name": "introduction_confirmed!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 20,
+        "name": "hidden_panels",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "hidden_panels"
+          }
+        }
+      },
+      {
+        "ordinal": 21,
+        "name": "layout_breakpoints",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "layout_breakpoints"
+          }
+        }
+      },
+      {
+        "ordinal": 22,
+        "name": "layout_override",
+        "type_info": {
+          "Custom": {
+            "name": "map_layout",
+            "kind": {
+              "Enum": [
+                "manual",
+                "tree"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "layout_override"
+          }
+        }
+      },
+      {
+        "ordinal": 23,
+        "name": "is_pinned",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "is_pinned"
+          }
+        }
+      },
+      {
+        "ordinal": 24,
+        "name": "background_image_path",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "background_image_path"
+          }
+        }
+      },
+      {
+        "ordinal": 25,
+        "name": "background_image_mode",
+        "type_info": {
+          "Custom": {
+            "name": "map_background_mode",
+            "kind": {
+              "Enum": [
+                "grid",
+                "viewport"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "map_user_settings",
+            "name": "background_image_mode"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null,
+      false,
+      true,
+      true,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "18ca5a97ebfe28529fa67ccd3046fe2b21efe7d9cac0bb36568f4c36cd241516"
+}

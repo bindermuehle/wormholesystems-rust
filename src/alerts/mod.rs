@@ -11,6 +11,7 @@ pub mod killmail;
 pub mod place;
 pub mod proximity;
 pub mod ships;
+pub mod structure;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -232,6 +233,60 @@ impl Runtime {
         .await
     }
 
+    /// Offer what just happened to a map's shared structures to its structure alerts. The
+    /// events are read back as the map may see them, so one it has no claim to goes nowhere.
+    pub async fn structure_events(
+        &self,
+        pool: &PgPool,
+        map_id: i64,
+        event_ids: &[i64],
+    ) -> Vec<Outgoing> {
+        let mut alerts = self
+            .of_kind(pool, AlertKind::StructureAttack, Some(map_id))
+            .await;
+        alerts.extend(
+            self.of_kind(pool, AlertKind::StructureFuel, Some(map_id))
+                .await,
+        );
+        if alerts.is_empty() || event_ids.is_empty() {
+            return Vec::new();
+        }
+        let events = match crate::maps::structures::events(pool, map_id, Some(event_ids)).await {
+            Ok(events) => events,
+            Err(err) => {
+                tracing::error!("alerts: could not read structure events for map {map_id}: {err}");
+                return Vec::new();
+            }
+        };
+        structure::events(pool, &alerts, &events, &self.public_url).await
+    }
+
+    /// Check a map's shared structures against its fuel alerts, after their timers were
+    /// read again.
+    pub async fn structure_fuel(&self, pool: &PgPool, map_id: i64) -> Vec<Outgoing> {
+        let alerts = self
+            .of_kind(pool, AlertKind::StructureFuel, Some(map_id))
+            .await;
+        if alerts.is_empty() {
+            return Vec::new();
+        }
+        let structures = match crate::maps::structures::structures(pool, map_id).await {
+            Ok(structures) => structures,
+            Err(err) => {
+                tracing::error!("alerts: could not read structures for map {map_id}: {err}");
+                return Vec::new();
+            }
+        };
+        structure::fuel(
+            pool,
+            &alerts,
+            &structures,
+            chrono::Utc::now(),
+            &self.public_url,
+        )
+        .await
+    }
+
     /// Send one message now, waiting for Discord.
     pub async fn send(&self, pool: &PgPool, out: Outgoing) {
         fire(
@@ -439,6 +494,10 @@ crate::maps::text_enum! {
         Proximity => "proximity",
         /// A system came within capital jump range of a k-space exit.
         JumpRange => "jump_range",
+        /// A structure a member shares was shot, reinforced or lost.
+        StructureAttack => "structure_attack",
+        /// A structure a member shares is running out of fuel.
+        StructureFuel => "structure_fuel",
     }
 }
 
@@ -510,6 +569,10 @@ pub struct Alert {
     /// Jump range only: which hull's range is being measured, and the pilot's JDC level.
     pub ship_type: Option<ships::JumpShip>,
     pub jdc_level: Option<i32>,
+    /// Structure fuel only: how many days before the fuel runs out to fire.
+    pub fuel_days: Option<i32>,
+    /// Structure alerts only: the events it speaks about. Empty is the kind's usual set.
+    pub structure_events: Vec<crate::maps::structures::StructureEventKind>,
     pub filters: Vec<filters::Rule>,
     pub filter_match: filters::Match,
     pub is_active: bool,
@@ -529,7 +592,8 @@ async fn fetch_active(pool: &PgPool, kind: Option<AlertKind>) -> sqlx::Result<Ve
                   a.discord_guild_id, a.discord_channel_id,
                   r.discord_role_id as "discord_role_id?",
                   a.mention, a.target_solar_system_id, a.origin_solar_system_id,
-                  a.max_jumps, a.ship_type, a.jdc_level,
+                  a.max_jumps, a.ship_type, a.jdc_level, a.fuel_days,
+                  a.structure_events,
                   a.filters, a.filter_match, a.is_active
            from map_alerts a
            left join map_webhooks w on w.id = a.map_webhook_id
@@ -577,6 +641,10 @@ async fn fetch_active(pool: &PgPool, kind: Option<AlertKind>) -> sqlx::Result<Ve
                 max_jumps: row.max_jumps,
                 ship_type: row.ship_type.as_deref().and_then(ships::JumpShip::from_db),
                 jdc_level: row.jdc_level,
+                fuel_days: row.fuel_days,
+                structure_events: crate::maps::alerts::decode_structure_events(
+                    row.structure_events,
+                ),
                 filters,
                 filter_match,
                 is_active: row.is_active,

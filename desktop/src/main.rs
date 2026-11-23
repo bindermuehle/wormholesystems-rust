@@ -10,6 +10,7 @@ mod config;
 mod focus;
 mod fresh;
 mod hotkeys;
+mod instance;
 mod jump;
 #[cfg(not(target_os = "linux"))]
 mod native;
@@ -50,10 +51,14 @@ struct Shell {
 impl Global for Shell {}
 
 fn main() {
+    // Started again, the app shows the window of the copy that is running.
+    let Some(instance) = instance::claim() else {
+        return;
+    };
     let application = gpui_kit::application().with_assets(theme::Assets);
     // macOS: clicking the dock icon with the window closed.
     application.on_reopen(open_main);
-    application.run(|cx| {
+    application.run(move |cx| {
         gpui_kit::init(cx);
         theme::init(cx);
         cx.set_global(Shell {
@@ -88,10 +93,12 @@ fn main() {
                         .global::<Shell>()
                         .tray
                         .as_ref()
-                        .map(Tray::events)
-                        .unwrap_or_default();
+                        .map_or_default(Tray::events);
                     for event in events {
                         on_tray(event, cx);
+                    }
+                    if instance.show_requested() {
+                        open_main(cx);
                     }
                 });
             }

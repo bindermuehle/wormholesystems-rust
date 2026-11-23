@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select effect_icons, route_previews from user_preferences where user_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "effect_icons",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "user_preferences",
+            "name": "effect_icons"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "route_previews",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "user_preferences",
+            "name": "route_previews"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "d104155b84a91be77d29c125121b45c60410f3436bcea701525317c21ae97807"
+}

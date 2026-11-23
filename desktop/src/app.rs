@@ -14,8 +14,8 @@ use std::time::Duration;
 
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext, Context, Entity, FocusHandle, Image, ImageFormat,
-    KeyDownEvent, Subscription, Task, Window,
+    AnyWindowHandle, App, AppContext, Context, DisplayEvent, Entity, FocusHandle, Image,
+    ImageFormat, KeyDownEvent, Subscription, Task, Window,
 };
 
 use crate::alias;
@@ -185,12 +185,7 @@ impl DesktopApp {
         let chatlog_dir = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Documents/EVE/logs/Chatlogs")
-                .default_value(
-                    found
-                        .as_ref()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_default(),
-                )
+                .default_value(found.as_ref().map_or_default(|p| p.display().to_string()))
         });
         let sigs = cx.new(|_| Sigs {
             overlay: config.overlay.clone(),
@@ -279,7 +274,22 @@ impl DesktopApp {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Vec<Subscription> {
+        let this = cx.weak_entity();
         vec![
+            // A monitor coming or going: the overlay goes back to the one it was put on,
+            // or off the one that left.
+            cx.observe_displays(move |event, cx| {
+                if !matches!(event, DisplayEvent::Added(_) | DisplayEvent::Removed(_)) {
+                    return;
+                }
+                this.update(cx, |this, cx| {
+                    if this.overlay.is_some() {
+                        this.open_overlay(cx);
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }),
             cx.subscribe_in(chatlog_dir, window, |this, _, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
                     this.use_chatlog_dir(cx);
@@ -935,7 +945,7 @@ impl DesktopApp {
         cx: &mut Context<'_, Self>,
     ) {
         let copied = self.config.copy_on_jump && !bookmark.is_empty() && self.copy(&bookmark);
-        let mut text = what.map(|w| format!("{w}. ")).unwrap_or_default();
+        let mut text = what.map_or_default(|w| format!("{w}. "));
         if copied {
             write!(
                 text,

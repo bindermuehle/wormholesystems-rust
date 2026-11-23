@@ -9,11 +9,23 @@ one up once and it speaks when the answer changes, instead of somebody watching 
 
 ## What you can ask
 
-| Kind           | Fires when                                                                     |
-| -------------- | ------------------------------------------------------------------------------ |
-| **Killmail**   | Something dies in the chain, filtered by who was involved and on which side.   |
-| **Proximity**  | The chain comes within a set number of jumps of a system you named.            |
-| **Jump range** | A capital of a given hull and jump-drive skill could reach a system you named. |
+| Kind                              | Fires when                                                                                                                                 |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Killmail**                      | Something dies in the chain, filtered by who was involved and on which side.                                                               |
+| **Proximity**                     | The chain comes within a set number of jumps of a system you named.                                                                        |
+| **Jump range**                    | A capital of a given hull and jump-drive skill could reach a system you named.                                                             |
+| **Structure attacks and changes** | Something is done to a structure a member [shares with the map](/documentation/intel/structures): shot, reinforced, destroyed, unanchored. |
+| **Structure fuel**                | A shared structure has the number of days of fuel left that you set, or EVE warns that a tower or Metenox is running low.                  |
+
+The two structure alerts watch nothing until a member turns on structure sharing for the
+map. A fuel alert fires once per refuel: topping the structure up arms it again.
+
+Each structure alert lists the events it can speak about, and you tick the ones you want.
+The bad news is ticked to begin with (attacks, lost shields and armor, reinforced,
+destroyed, unanchoring; EVE's low fuel warning, out of fuel, low reagents). The routine
+ones are there if you want them: anchoring started, came online, services offline,
+refuelled after running dry. An alert made from Discord takes the usual set, and can be
+edited on the alerts page afterwards.
 
 ### Proximity with a starting point
 
@@ -55,14 +67,18 @@ Roles are named the same way, so an alert can say who to ping without anyone rec
 The bot creates alerts too, so a scout does not have to leave the channel. Every command
 starts with the destination, then the kind, then exactly the options that kind takes:
 
-| Command                        | Options                                            |
-| ------------------------------ | -------------------------------------------------- |
-| `/wh alert-dm proximity`       | map, system, jumps, optional starting point        |
-| `/wh alert-dm jump-range`      | map, system, ship, JDC level                       |
-| `/wh alert-dm killmail`        | map, jumps                                         |
-| `/wh alert-channel proximity`  | the same, plus who to mention and an optional role |
-| `/wh alert-channel jump-range` | the same, plus who to mention and an optional role |
-| `/wh alert-channel killmail`   | the same, plus who to mention and an optional role |
+| Command                              | Options                                            |
+| ------------------------------------ | -------------------------------------------------- |
+| `/wh alert-dm proximity`             | map, system, jumps, optional starting point        |
+| `/wh alert-dm jump-range`            | map, system, ship, JDC level                       |
+| `/wh alert-dm killmail`              | map, jumps                                         |
+| `/wh alert-dm structure-attack`      | map                                                |
+| `/wh alert-dm structure-fuel`        | map, days                                          |
+| `/wh alert-channel proximity`        | the same, plus who to mention and an optional role |
+| `/wh alert-channel jump-range`       | the same, plus who to mention and an optional role |
+| `/wh alert-channel killmail`         | the same, plus who to mention and an optional role |
+| `/wh alert-channel structure-attack` | the same, plus who to mention and an optional role |
+| `/wh alert-channel structure-fuel`   | the same, plus who to mention and an optional role |
 
 A direct-message alert needs only access to the map: it reaches nobody but you. A channel
 alert posts into the channel the command was run in, so it takes a **manager** on the map

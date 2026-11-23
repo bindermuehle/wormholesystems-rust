@@ -3,6 +3,10 @@
 	// Every mutation publishes a MapEvent server-side and the WS triggers a refetch; pan, zoom
 	// and selection live outside the fetched data and nodes are keyed by id, so a refetch
 	// keeps interaction state.
+	import { createQuery } from '@tanstack/svelte-query';
+	import { q } from '$lib/api/queries';
+	import { copyText } from '$lib/clipboard';
+	import { typeById } from '$lib/map/signatures';
 	import { solarSystemId } from '$lib/map/system';
 	import { tickingMs } from '$lib/now.svelte';
 	import { syncDeepLink } from '../state/deep-link.svelte';
@@ -118,6 +122,18 @@
 			ev.preventDefault();
 			map.removeSelection();
 		}
+		// Ctrl+C on the map copies the active system's name, unless text is selected: that
+		// copy is the browser's.
+		const active = map.activeSystem;
+		if (
+			ev.key === 'c' &&
+			(ev.metaKey || ev.ctrlKey) &&
+			active?.kind === 'system' &&
+			!window.getSelection()?.toString()
+		) {
+			ev.preventDefault();
+			void copyText(active.name, { success: 'System name copied' });
+		}
 	}
 
 	function handleNodeSelect(ev: PointerEvent, s: MapSystemView) {
@@ -138,6 +154,13 @@
 			(id) => map.systems.byId.get(id)?.kind === 'ghost',
 		),
 	);
+	// A ghost has no class of its own, but a typed signature says where its hole leads.
+	const catalogQuery = createQuery(() => q.signatureCatalog());
+	function ghostDestClass(placementId: number): number | null {
+		const sig = map.ghostSignatures.get(placementId);
+		if (!sig || !catalogQuery.data) return null;
+		return typeById(catalogQuery.data, sig.signature_type_id)?.target_class ?? null;
+	}
 
 	function saveAlias(s: MapSystemView, alias: string | null, occupier: string | null) {
 		map.systems.rename(s, alias, occupier);
@@ -288,7 +311,8 @@
 					draggable={!map.layoutLocked && canWrite}
 					linkable={canWrite}
 					editable={canWrite}
-					signatureId={map.ghostSignatures.get(s.id) ?? null}
+					signatureId={map.ghostSignatures.get(s.id)?.signature_id ?? null}
+					destClass={ghostDestClass(s.id)}
 					onsavealias={(alias, occupier) => saveAlias(s, alias, occupier)}
 					active={map.activeId === s.id}
 					onselect={(ev) => handleNodeSelect(ev, s)}

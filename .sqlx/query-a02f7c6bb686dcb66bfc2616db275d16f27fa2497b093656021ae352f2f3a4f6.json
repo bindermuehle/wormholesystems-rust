@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into user_preferences (user_id, effect_icons, route_previews)\n         values ($1, coalesce($2::bool, $3), coalesce($4::bool, $5))\n         on conflict (user_id) do update set\n             effect_icons = coalesce($2::bool, user_preferences.effect_icons),\n             route_previews = coalesce($4::bool, user_preferences.route_previews),\n             updated_at = now()\n         returning effect_icons, route_previews",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "effect_icons",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "user_preferences",
+            "name": "effect_icons"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "route_previews",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "user_preferences",
+            "name": "route_previews"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "a02f7c6bb686dcb66bfc2616db275d16f27fa2497b093656021ae352f2f3a4f6"
+}

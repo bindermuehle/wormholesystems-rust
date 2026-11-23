@@ -3,4 +3,4 @@
 /**
  * A partial change: a field left out stays as it is.
  */
-export type UpdateUserPreferences = { effect_icons?: boolean, };
+export type UpdateUserPreferences = { effect_icons?: boolean, route_previews?: boolean, };

@@ -6,6 +6,7 @@
 	import { systemResolver } from '$lib/resolve-cache.svelte';
 	import SystemRow from '../pickers/SystemRow.svelte';
 	import SystemMenu from '../system-menu/SystemMenu.svelte';
+	import SystemMenuButton from '../system-menu/SystemMenuButton.svelte';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import Hint from '$lib/components/Hint.svelte';
 
@@ -28,11 +29,11 @@
 	});
 </script>
 
-<!-- Tracks: index, hop marker, the four shared system columns, then the ignore slot. -->
+<!-- Tracks: index, hop marker, the four shared system columns, the ignore slot, then the menu. -->
 <!-- ignoreNonKeyboardFocus: a tooltip that opens because something took focus, rather than
      because the pointer went near it, leaves a dismiss layer that eats the next click. -->
 <ol
-	class="grid max-h-64 grid-cols-[min-content_min-content_min-content_minmax(0,1fr)_minmax(0,0.8fr)_min-content_min-content] items-center gap-x-2 overflow-y-auto"
+	class="grid max-h-64 grid-cols-[min-content_min-content_min-content_minmax(0,1fr)_minmax(0,0.8fr)_min-content_min-content_min-content] items-center gap-x-2 overflow-y-auto"
 	data-testid="route-list"
 >
 	{#each steps as step, i (i)}
@@ -80,13 +81,16 @@
 						{:else}
 							<span></span>
 						{/if}
+					{:else}
+						<span></span>
 					{/if}
+					<SystemMenuButton name={r.name} />
 				</SystemMenu>
 			{:else}
 				<span class="text-right text-muted-foreground">{i}</span>
 				<span></span>
 				<span class="col-span-4 truncate text-muted-foreground">{step.id}</span>
-				{#if onignore}<span></span>{/if}
+				<span class="col-span-2"></span>
 			{/if}
 		</li>
 	{/each}

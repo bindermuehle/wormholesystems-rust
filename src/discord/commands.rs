@@ -119,6 +119,10 @@ fn alert_group(name: &str, description: &str, delivery: AlertDelivery) -> Value 
         "type": 4, "name": "jdc", "description": "Jump Drive Calibration level",
         "required": true, "min_value": 0, "max_value": 5
     });
+    let days = json!({
+        "type": 4, "name": "days", "description": "This many days before the fuel runs out",
+        "required": true, "min_value": 1, "max_value": 30
+    });
     let from = json!({
         "type": 3, "name": "from", "description": "Measure from this system through the chain",
         "required": false, "autocomplete": true
@@ -167,7 +171,17 @@ fn alert_group(name: &str, description: &str, delivery: AlertDelivery) -> Value 
             {
                 "type": 1, "name": "killmail",
                 "description": "Something dies within gate jumps of the chain",
-                "options": options(vec![map, jumps], vec![])
+                "options": options(vec![map.clone(), jumps], vec![])
+            },
+            {
+                "type": 1, "name": "structure-attack",
+                "description": "A structure a member shares with the map is shot or lost",
+                "options": options(vec![map.clone()], vec![])
+            },
+            {
+                "type": 1, "name": "structure-fuel",
+                "description": "A structure a member shares with the map is running out of fuel",
+                "options": options(vec![map, days], vec![])
             }
         ]
     })
@@ -275,6 +289,7 @@ struct AlertRequest {
     jumps: Option<i64>,
     ship: Option<JumpShip>,
     jdc: Option<i64>,
+    days: Option<i64>,
     /// Absent for a direct message, which pings nobody.
     mention: Option<AlertMention>,
     role: Option<String>,
@@ -288,6 +303,8 @@ fn parse_alert(group: &CommandOption, delivery: AlertDelivery) -> Action<'_> {
         "proximity" => AlertKind::Proximity,
         "jump-range" => AlertKind::JumpRange,
         "killmail" => AlertKind::Killmail,
+        "structure-attack" => AlertKind::StructureAttack,
+        "structure-fuel" => AlertKind::StructureFuel,
         other => return Action::Unknown(other),
     };
     let integer = |name: &str| option(&variant.options, name).and_then(CommandOption::integer);
@@ -301,6 +318,7 @@ fn parse_alert(group: &CommandOption, delivery: AlertDelivery) -> Action<'_> {
         jumps: integer("jumps"),
         ship: string("ship").and_then(JumpShip::from_db),
         jdc: integer("jdc"),
+        days: integer("days"),
         mention: string("mention").and_then(AlertMention::from_db),
         role: string("role").map(str::to_string),
     })
@@ -395,6 +413,11 @@ fn alert_name(body: &SaveAlert, target: Option<&str>, origin: Option<&str>) -> S
             body.ship_type.map_or("Capital", JumpShip::label)
         ),
         AlertKind::Killmail => format!("Kills within {} jumps of the chain", body.max_jumps),
+        AlertKind::StructureAttack => "Structures under attack".into(),
+        AlertKind::StructureFuel => format!(
+            "Structures with {} days of fuel left",
+            body.fuel_days.unwrap_or(0)
+        ),
     }
 }
 
@@ -472,7 +495,7 @@ async fn create_alert(
     };
 
     let target = match (request.kind, request.system) {
-        (AlertKind::Killmail, _) => None,
+        (AlertKind::Killmail | AlertKind::StructureAttack | AlertKind::StructureFuel, _) => None,
         (_, None) => return "Pick a system from the suggestions.".into(),
         (_, Some(id)) => match system_name(state, id).await {
             Some(name) => Some((id, name)),
@@ -502,7 +525,7 @@ async fn create_alert(
     };
 
     let jumps = match (request.kind, request.jumps) {
-        (AlertKind::JumpRange, _) => 0,
+        (AlertKind::JumpRange | AlertKind::StructureAttack | AlertKind::StructureFuel, _) => 0,
         (_, Some(jumps)) => match i32::try_from(jumps) {
             Ok(jumps) => jumps,
             Err(_) => return "That is too many jumps.".into(),
@@ -511,6 +534,9 @@ async fn create_alert(
     };
     let Ok(jdc_level) = request.jdc.map(i32::try_from).transpose() else {
         return "That is not a JDC level.".into();
+    };
+    let Ok(fuel_days) = request.days.map(i32::try_from).transpose() else {
+        return "That is too many days.".into();
     };
     let mut body = SaveAlert {
         name: String::new(),
@@ -526,6 +552,8 @@ async fn create_alert(
         max_jumps: jumps,
         ship_type: request.ship,
         jdc_level,
+        fuel_days,
+        structure_events: Vec::new(),
         filters: Vec::new(),
         filter_match: filters::Match::Any,
     };
@@ -617,6 +645,13 @@ fn created_reply(
         (AlertKind::Killmail, _) => {
             format!("Alert created for kills within {jumps} jumps of the **{map_name}** chain.")
         }
+        (AlertKind::StructureAttack, _) => format!(
+            "Alert created for attacks on the structures members share with **{map_name}**."
+        ),
+        (AlertKind::StructureFuel, _) => format!(
+            "Alert created for structures shared with **{map_name}** with {} days of fuel left.",
+            body.fuel_days.unwrap_or(0)
+        ),
     }
 }
 
@@ -1003,7 +1038,13 @@ mod tests {
             assert_eq!(group["type"], 2);
             assert_eq!(
                 names(&group["options"]),
-                vec!["proximity", "jump-range", "killmail"]
+                vec![
+                    "proximity",
+                    "jump-range",
+                    "killmail",
+                    "structure-attack",
+                    "structure-fuel"
+                ]
             );
             let variant = |name: &str| {
                 group["options"]
@@ -1036,6 +1077,14 @@ mod tests {
             assert_eq!(
                 names(&variant("killmail")["options"]),
                 expected(&["map", "jumps"], &[])
+            );
+            assert_eq!(
+                names(&variant("structure-attack")["options"]),
+                expected(&["map"], &[])
+            );
+            assert_eq!(
+                names(&variant("structure-fuel")["options"]),
+                expected(&["map", "days"], &[])
             );
             for variant in group["options"].as_array().unwrap() {
                 let mut seen_optional = false;
@@ -1081,6 +1130,7 @@ mod tests {
                 jumps: Some(5),
                 ship: None,
                 jdc: None,
+                days: None,
                 mention: Some(AlertMention::Role),
                 role: Some("77".into()),
             })
@@ -1103,6 +1153,7 @@ mod tests {
                 jumps: None,
                 ship: Some(JumpShip::Carrier),
                 jdc: Some(4),
+                days: None,
                 mention: None,
                 role: None,
             })
@@ -1130,6 +1181,8 @@ mod tests {
             max_jumps: 5,
             ship_type: Some(JumpShip::Dreadnought),
             jdc_level: Some(5),
+            fuel_days: None,
+            structure_events: Vec::new(),
             filters: Vec::new(),
             filter_match: filters::Match::Any,
         }

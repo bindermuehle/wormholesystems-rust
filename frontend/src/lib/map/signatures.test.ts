@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseScan as parseWith, spawnsAt, typeById, typesForCategory } from './signatures';
+import {
+	parseScan as parseWith,
+	spawnsAt,
+	typeById,
+	typesForCategory,
+	typesLeadingTo,
+} from './signatures';
 import type { SignatureCatalog } from '$lib/api/types/SignatureCatalog';
 import type { SignatureTypeInfo } from '$lib/api/types/SignatureTypeInfo';
 import translations from '$lib/signatures/translations.json';
@@ -209,6 +215,8 @@ describe('parseScan', () => {
 				// Both "Gewöhnliche Erzvorkommen im Grenzgebiet" in German.
 				type({ id: 147, name: 'Unexceptional Frontier Deposit', signature_category_id: 6 }),
 				type({ id: 148, name: 'Average Frontier Deposit', signature_category_id: 6 }),
+				type({ id: 125, name: 'Unsecured Frontier Trinary Hub', signature_category_id: 2 }),
+				type({ id: 18, name: 'Integrated Terminus', signature_category_id: 4 }),
 			],
 		};
 
@@ -245,6 +253,29 @@ describe('parseScan', () => {
 			expect(parseScan(paste, localized)).toEqual([
 				{ signature_id: 'ABC-123', group: 'relic', signature_type_id: 65, name: undefined },
 				{ signature_id: 'DEF-456', group: 'combat', signature_type_id: 17, name: undefined },
+			]);
+		});
+
+		// #95, straight from a Russian client: site names it leaves in English, and wormholes
+		// with the English name in brackets.
+		it('parses a Russian scan', () => {
+			const paste = [
+				'QRA-468\tКосмическая аномалия\tАстероидный район\tAverage Frontier Deposit\t100,0%\t17,91 а.е.',
+				'RCC-355\tСкрытый сигнал\tЧервоточина\tНестабильная червоточина (Unstable Wormhole)\t100,0%\t23,22 а.е.',
+				'DMA-799\tСкрытый сигнал\tИнформационный район\tUnsecured Frontier Trinary Hub\t100,0%\t17,43 а.е.',
+				'EYX-960\tКосмическая аномалия\tБоевой район\tIntegrated Terminus\t100,0%\t18,76 а.е.',
+			].join('\n');
+
+			expect(parseScan(paste, localized)).toEqual([
+				{ signature_id: 'QRA-468', group: 'ore', signature_type_id: 148, name: undefined },
+				{
+					signature_id: 'RCC-355',
+					group: 'wormhole',
+					signature_type_id: undefined,
+					name: 'Нестабильная червоточина (Unstable Wormhole)',
+				},
+				{ signature_id: 'DMA-799', group: 'data', signature_type_id: 125, name: undefined },
+				{ signature_id: 'EYX-960', group: 'combat', signature_type_id: 18, name: undefined },
 			]);
 		});
 
@@ -415,5 +446,36 @@ describe('typesForCategory', () => {
 
 	it('lists everything without a location', () => {
 		expect(names(4, null)).toEqual(['Frontier Barracks', 'Sansha Haven']);
+	});
+});
+
+describe('typesLeadingTo', () => {
+	const hole = (id: number, signature: string, target_class: number | null) =>
+		type({
+			id,
+			name: `${signature} ${target_class}`,
+			signature,
+			signature_category_id: 1,
+			target_class,
+		});
+	const types = [
+		hole(1, 'K162', null),
+		hole(2, 'K162', 2),
+		hole(3, 'K162', 101),
+		hole(4, 'K162', 5),
+		hole(5, 'K162', 102),
+		hole(6, 'C729', 103),
+	];
+	const ids = (targetClass: number) => typesLeadingTo(types, targetClass).map((t) => t.id);
+
+	it('leaves the group out once the class has a type of its own', () => {
+		expect(ids(2)).toEqual([2]);
+		expect(ids(5)).toEqual([4]);
+	});
+
+	it('keeps the group where nothing names the class', () => {
+		// No "K162 to C4" here, and no C729 per kind of known space.
+		expect(ids(4)).toEqual([5]);
+		expect(ids(8)).toEqual([6]);
 	});
 });

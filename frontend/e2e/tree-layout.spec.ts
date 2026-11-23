@@ -46,8 +46,8 @@ test('a map set to automatic placement draws the chain as a tree', async ({ page
 	const jita = await nodePosition(page, 'Jita');
 	const perimeter = await nodePosition(page, 'Perimeter');
 	expect(home.left).toBe(20);
-	expect(jita.left).toBe(340);
-	expect(perimeter.left).toBe(340);
+	expect(jita.left).toBe(280);
+	expect(perimeter.left).toBe(280);
 	expect(jita.top).not.toBe(perimeter.top);
 
 	// Nothing to drag: the layout owns the positions.
@@ -66,7 +66,7 @@ test('a viewer can pick their own placement when the map allows it', async ({ pa
 	expect((await nodePosition(page, 'Jita')).left).toBe(900);
 
 	await page.getByTestId('placement-tree').click();
-	await expect.poll(async () => (await nodePosition(page, 'Jita')).left).toBe(340);
+	await expect.poll(async () => (await nodePosition(page, 'Jita')).left).toBe(280);
 
 	// It is a preference of this viewer's, so it survives a reload. The switch paints
 	// before the write lands, so wait for the stored value: reloading first would cancel
@@ -79,7 +79,7 @@ test('a viewer can pick their own placement when the map allows it', async ({ pa
 		.toBe('tree');
 	await reloadApp(page);
 	await expect(page.getByTestId('system-node')).toHaveCount(3);
-	await expect.poll(async () => (await nodePosition(page, 'Jita')).left).toBe(340);
+	await expect.poll(async () => (await nodePosition(page, 'Jita')).left).toBe(280);
 
 	// And going back to the map's own mode restores the dragged positions.
 	await page.getByTestId('placement-manual').click();

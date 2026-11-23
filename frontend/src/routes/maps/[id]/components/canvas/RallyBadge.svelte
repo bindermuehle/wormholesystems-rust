@@ -2,12 +2,13 @@
 	// Where the fleet is forming up, and how far it is from the staging system. A map holds
 	// up to two rally points (a form-up spot and the fight, say), each with its own badge. A
 	// rally is called for everyone at once, so the count is the map's own: home to rally,
-	// the same number for whoever is looking at it.
+	// the same number for whoever is looking at it. With several homes it is the nearest.
 	import FlagIcon from '@lucide/svelte/icons/flag';
 	import * as Popover from '$lib/components/ui/popover';
 	import ClassBadge from '$lib/components/ClassBadge.svelte';
 	import RouteList from '../panels/RouteList.svelte';
 	import { solarSystemId } from '$lib/map/system';
+	import type { RouteResult } from '$lib/routing/algorithm';
 	import type { MapSystemView } from '$lib/api/types/MapSystemView';
 	import type { MapState } from '../../state/map-state.svelte';
 
@@ -15,21 +16,27 @@
 
 	type RallySystem = Extract<MapSystemView, { kind: 'system' }>;
 
-	const homeId = $derived(
+	const homeIds = $derived(
 		map.systems.all
 			.filter((s) => s.is_home)
 			.map(solarSystemId)
-			.find((id) => id !== null) ?? null,
+			.filter((id) => id !== null),
 	);
 
 	const rallies = $derived(
 		map.systems.all
 			.filter((s): s is RallySystem => s.is_rally && s.kind === 'system')
 			.map((rally) => {
-				const result =
-					homeId === null || homeId === rally.solar_system_id
-						? null
-						: (map.route.search(homeId)?.routeTo(rally.solar_system_id) ?? null);
+				// A rally point that is a home is no distance to show.
+				const result = homeIds.includes(rally.solar_system_id)
+					? null
+					: homeIds
+							.map((home) => map.route.search(home)?.routeTo(rally.solar_system_id) ?? null)
+							.filter((route) => route !== null)
+							.reduce<RouteResult | null>(
+								(best, route) => (best === null || route.jumps < best.jumps ? route : best),
+								null,
+							);
 				return { rally, result };
 			}),
 	);

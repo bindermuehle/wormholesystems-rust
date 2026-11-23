@@ -271,6 +271,19 @@ async fn start_background(
         crate::alerts::start(db.clone(), alerts);
     }
 
+    // Read the structures members share with their maps: attacks and fuel, for the card
+    // and the structure alerts.
+    crate::structure_watch::start(
+        crate::structure_watch::Watch::new(
+            db.clone(),
+            Arc::clone(sso),
+            Arc::clone(tokens),
+            esi.clone(),
+            alerts.clone(),
+        ),
+        server.clone(),
+    );
+
     // Killmail ingest + daily threat analysis (gated by ZKB_LISTEN=1).
     crate::killmails::start(db.clone(), esi.clone(), alerts, &config.killmails);
 

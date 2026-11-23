@@ -71,9 +71,24 @@ interface Rect {
 
 // World units.
 const PARALLEL_SPACING = 14;
-const BEND_SPACING = 16;
 const CORNER_RADIUS = 10;
-const LANE_MARGIN = 40;
+export const BEND_SPACING = 16;
+export const LANE_MARGIN = 40;
+
+/**
+ * Packs runs onto as few lanes as first fit gives, in the order handed in, and returns the
+ * lane of each. Overlap is the only thing a lane cannot have: two runs on one line hide
+ * each other, where two that merely touch or cross stay readable.
+ */
+export function packLanes(spans: readonly (readonly [number, number])[]): number[] {
+	const lanes: (readonly [number, number])[][] = [];
+	return spans.map((span) => {
+		let lane = lanes.findIndex((taken) => taken.every(([s, e]) => span[0] >= e || span[1] <= s));
+		if (lane === -1) lane = lanes.push([]) - 1;
+		lanes[lane].push(span);
+		return lane;
+	});
+}
 
 function rectAt(position: Vec2, nodeH: number): Rect {
 	return {
@@ -487,24 +502,12 @@ export function treeEdges(
 				? [Math.min(e.from.y, e.to.y), Math.max(e.from.y, e.to.y)]
 				: [Math.min(e.from.x, e.to.x), Math.max(e.from.x, e.to.x)];
 
-		const lanes: Routed[][] = [];
-		const laneOf = new Map<number, number>();
+		// Taken longest first, first fit, that lands on the fewest lanes the corridor can
+		// be drawn with.
 		const ordered = [...group].sort((a, b) => b.distance - a.distance || a.signed - b.signed);
-		for (const edge of ordered) {
-			const span = reach(edge);
-			const fits = (lane: number) =>
-				lanes[lane].every((other) => {
-					const [s, e] = reach(other);
-					return span[0] >= e || span[1] <= s;
-				});
-			// Overlap is the only thing a lane cannot have: two runs on one line hide each
-			// other, where two runs that cross stay readable. Taken longest first, first fit,
-			// that lands on the fewest lanes the corridor can be drawn with.
-			let lane = lanes.findIndex((_, i) => fits(i));
-			if (lane === -1) lane = lanes.push([]) - 1;
-			lanes[lane].push(edge);
-			laneOf.set(edge.id, lane);
-		}
+		const packed = packLanes(ordered.map(reach));
+		const laneCount = Math.max(...packed) + 1;
+		const laneOf = new Map(ordered.map((edge, i) => [edge.id, packed[i]]));
 
 		// One corridor, so one set of lines: measured from its near edge, not from each
 		// run's own direction, or a run drawn leftward would count its lanes backwards.
@@ -531,7 +534,7 @@ export function treeEdges(
 						{ at: edge.to.x, fromNear: edge.to.y < middle },
 					];
 		};
-		const precedes = lanes.map(() => new Set<number>());
+		const precedes = Array.from({ length: laneCount }, () => new Set<number>());
 		for (let i = 0; i < group.length; i++) {
 			for (let j = i + 1; j < group.length; j++) {
 				const laneA = laneOf.get(group[i].id)!;
@@ -549,7 +552,7 @@ export function treeEdges(
 		const position = laneOrder(precedes);
 
 		for (const edge of group) {
-			edge.bend = near + ((far - near) * (position[laneOf.get(edge.id)!] + 1)) / (lanes.length + 1);
+			edge.bend = near + ((far - near) * (position[laneOf.get(edge.id)!] + 1)) / (laneCount + 1);
 		}
 	}
 

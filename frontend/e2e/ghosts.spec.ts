@@ -125,4 +125,11 @@ test('a signature typed in and called a wormhole gets a node too', async ({ page
 	const ghost = page.locator('[data-testid="system-node"][data-ghost="true"]');
 	await expect(ghost).toHaveCount(1);
 	await expect(ghost.getByTestId('ghost-signature')).toHaveText('WHX-303');
+
+	// Where it leads is unknown until the signature has a type that says.
+	await expect(ghost.getByTestId('class-badge')).toHaveAttribute('data-class', '?');
+	await page.getByTestId('sig-row').getByTestId('sig-type').click();
+	await page.getByTestId('sig-type-search').fill('H296');
+	await page.getByRole('option', { name: /H296/ }).first().click();
+	await expect(ghost.getByTestId('class-badge')).toHaveAttribute('data-class', 'C5');
 });

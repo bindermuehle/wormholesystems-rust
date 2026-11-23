@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select c.id from map_connections c\n           join map_solar_systems f on f.id = c.from_system\n           join map_solar_systems t on t.id = c.to_system\n           where c.map_id = $1\n             and ((f.solar_system_id = $2 and t.solar_system_id = $3)\n                  or (f.solar_system_id = $3 and t.solar_system_id = $2))\n             and not exists (\n                 select 1 from signatures s\n                 where s.map_id = c.map_id and s.connection_id = c.id\n                   and s.solar_system_id = $2 and s.id <> $4)\n           order by exists (\n                 select 1 from signatures s where s.id = $4 and s.connection_id = c.id) desc,\n               c.id\n           limit 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "map_connections",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "59b9a9731802d7e43e20a77fc716159c01b05b9afc0540c24d48cce14a12952c"
+}

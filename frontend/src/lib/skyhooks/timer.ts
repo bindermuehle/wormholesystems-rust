@@ -66,11 +66,13 @@ export function describe(t: SkyhookTiming): string {
 	return `Raidable for ${spell}`;
 }
 
-const DOT = {
-	upcoming: 'bg-amber-400',
-	open: 'bg-emerald-400 animate-pulse',
-	closing: 'bg-red-400 animate-pulse',
-	closed: 'bg-muted-foreground/40',
+// The mark at the start of a row. Its shape says the status (see the card), so it holds
+// still: the timer beside it is what moves.
+const MARK = {
+	upcoming: 'text-amber-400',
+	open: 'text-emerald-400',
+	closing: 'text-red-400',
+	closed: 'text-muted-foreground/40',
 } satisfies Record<SkyhookStatus, string>;
 
 const TEXT = {
@@ -80,8 +82,8 @@ const TEXT = {
 	closed: 'text-muted-foreground/60',
 } satisfies Record<SkyhookStatus, string>;
 
-export function statusDot(status: SkyhookStatus): string {
-	return DOT[status];
+export function statusMark(status: SkyhookStatus): string {
+	return MARK[status];
 }
 
 export function statusText(status: SkyhookStatus): string {

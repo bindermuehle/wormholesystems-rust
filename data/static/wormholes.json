@@ -104,9 +104,9 @@
         4
       ],
       "static": false,
-      "max_mass_per_jump": 2000000000,
+      "max_mass_per_jump": 375000000,
       "lifetime": 16,
-      "total_mass": 5000000000,
+      "total_mass": 3000000000,
       "sibling_groups": null,
       "typeID": 30697,
       "signature_strength": null
@@ -356,7 +356,7 @@
       "src": [],
       "static": false,
       "max_mass_per_jump": 5000000,
-      "lifetime": 16,
+      "lifetime": 4.5,
       "total_mass": 3000000000,
       "sibling_groups": null,
       "typeID": 34439,
@@ -662,9 +662,9 @@
         4
       ],
       "static": false,
-      "max_mass_per_jump": 2000000000,
+      "max_mass_per_jump": 375000000,
       "lifetime": 24,
-      "total_mass": 3300000000,
+      "total_mass": 3000000000,
       "sibling_groups": null,
       "typeID": 30696,
       "signature_strength": null
@@ -1332,7 +1332,7 @@
         6
       ],
       "static": false,
-      "max_mass_per_jump": 620000000,
+      "max_mass_per_jump": 62000000,
       "lifetime": 24,
       "total_mass": 1000000000,
       "sibling_groups": null,

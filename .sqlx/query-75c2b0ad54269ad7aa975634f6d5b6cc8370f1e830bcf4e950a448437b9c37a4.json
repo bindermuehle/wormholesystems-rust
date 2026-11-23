@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update map_solar_systems\n         set is_home = coalesce(solar_system_id = any($2), false)\n         where map_id = $1\n           and is_home is distinct from coalesce(solar_system_id = any($2), false)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "75c2b0ad54269ad7aa975634f6d5b6cc8370f1e830bcf4e950a448437b9c37a4"
+}

@@ -4,7 +4,7 @@ import type { MapConnection } from '$lib/api/types/MapConnection';
 import type { MapSystemView } from '$lib/api/types/MapSystemView';
 import type { Signature } from '$lib/api/types/Signature';
 import type { MappedSystem } from '$lib/map/system';
-import { existingConnection, ghostAliases, ghostSignatureIds, ghostsFrom } from './ghosts';
+import { existingConnection, ghostAliases, ghostSignatures, ghostsFrom } from './ghosts';
 
 const system = (id: number): MapSystemView => ({ kind: 'system', id }) as MapSystemView;
 const ghost = (id: number, alias: string | null = null): MapSystemView =>
@@ -67,22 +67,19 @@ describe('existingConnection', () => {
 	});
 });
 
-describe('ghostSignatureIds', () => {
+describe('ghostSignatures', () => {
 	it('keys each ghost by the signature its connection is linked to, both endpoints', () => {
-		const out = ghostSignatureIds(
-			SYSTEMS,
-			[conn(10, 1, 3), conn(11, 4, 1)],
-			[sig(7, 10, 'AAA-111'), sig(8, 11, 'BBB-222')],
-		);
+		const sigs = [sig(7, 10, 'AAA-111'), sig(8, 11, 'BBB-222')];
+		const out = ghostSignatures(SYSTEMS, [conn(10, 1, 3), conn(11, 4, 1)], sigs);
 		expect(out).toEqual(
 			new Map([
-				[3, 'AAA-111'],
-				[4, 'BBB-222'],
+				[3, sigs[0]],
+				[4, sigs[1]],
 			]),
 		);
 	});
 
 	it('leaves an unscanned ghost unnamed', () => {
-		expect(ghostSignatureIds(SYSTEMS, [conn(10, 1, 3)], []).size).toBe(0);
+		expect(ghostSignatures(SYSTEMS, [conn(10, 1, 3)], []).size).toBe(0);
 	});
 });

@@ -1,0 +1,280 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select e.id, e.kind, e.type_id, t.name as \"type_name?\",\n                  coalesce(cs.name, s.name, mo.name, pl.name) as \"structure_name?\",\n                  pl.celestial_index as \"planet_index?\",\n                  e.solar_system_id, ss.name as \"system_name?\",\n                  ss.security_status as \"security?\",\n                  rg.name as \"region?\", ss.region_id as \"region_id?\",\n                  ss.constellation_id as \"constellation_id?\",\n                  ws.wormhole_class_id::bigint as \"wormhole_class_id?\",\n                  e.corporation_id, oc.name as \"corporation_name?\",\n                  ac.name as \"aggressor?\",\n                  coalesce(acorp.name, e.aggressor_corporation) as \"aggressor_corporation?\",\n                  aal.name as \"aggressor_alliance?\",\n                  e.shield, e.armor, e.hull, e.timer_ends_at, e.occurred_at\n           from structure_events e\n           left join types t on t.id = e.type_id\n           left join corporation_structures cs on cs.structure_id = e.structure_id\n           left join structures s on s.id = e.structure_id\n           left join moons mo on mo.id = e.moon_id\n           left join planets pl on pl.id = e.planet_id\n           left join solar_systems ss on ss.id = e.solar_system_id\n           left join regions rg on rg.id = ss.region_id\n           left join wormhole_systems ws on ws.solar_system_id = ss.id\n           left join corporations oc on oc.id = e.corporation_id\n           left join characters ac on ac.id = e.aggressor_character_id\n           left join corporations acorp on acorp.id = e.aggressor_corporation_id\n           left join alliances aal on aal.id = e.aggressor_alliance_id\n           where e.occurred_at > now() - make_interval(days => $3)\n             and ($2::bigint[] is null or e.id = any($2))\n             and exists(\n                 select 1 from structure_event_receipts rc\n                 join map_structure_sharers sh on sh.character_id = rc.character_id\n                 where rc.structure_event_id = e.id and sh.map_id = $1)\n           order by e.occurred_at desc, e.id desc\n           limit $4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "structure_events",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "structure_events",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "type_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "structure_events",
+            "name": "type_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "type_name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "types",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "structure_name?",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "planet_index?",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "planets",
+            "name": "celestial_index"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "solar_system_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "structure_events",
+            "name": "solar_system_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "system_name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "solar_systems",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "security?",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "solar_systems",
+            "name": "security_status"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "region?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "regions",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "region_id?",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "solar_systems",
+            "name": "region_id"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "constellation_id?",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "solar_systems",
+            "name": "constellation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "wormhole_class_id?",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 13,
+        "name": "corporation_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "structure_events",
+            "name": "corporation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "corporation_name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "corporations",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "aggressor?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "characters",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "aggressor_corporation?",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 17,
+        "name": "aggressor_alliance?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "alliances",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "shield",
+        "type_info": "Float4",
+        "origin": {
+          "Table": {
+            "table": "structure_events",
+            "name": "shield"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
+        "name": "armor",
+        "type_info": "Float4",
+        "origin": {
+          "Table": {
+            "table": "structure_events",
+            "name": "armor"
+          }
+        }
+      },
+      {
+        "ordinal": 20,
+        "name": "hull",
+        "type_info": "Float4",
+        "origin": {
+          "Table": {
+            "table": "structure_events",
+            "name": "hull"
+          }
+        }
+      },
+      {
+        "ordinal": 21,
+        "name": "timer_ends_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "structure_events",
+            "name": "timer_ends_at"
+          }
+        }
+      },
+      {
+        "ordinal": 22,
+        "name": "occurred_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "structure_events",
+            "name": "occurred_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array",
+        "Int4",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      null,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null,
+      false,
+      false,
+      false,
+      null,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "6ba4d44d711f7bfa1d51f95944515693fd91d39acec8f6109d81ac8aa7935f5b"
+}

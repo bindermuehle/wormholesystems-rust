@@ -63,15 +63,16 @@ export function existingConnection(
 }
 
 /**
- * The scanner id an unmapped hole is known by. A ghost has no name of its own, so the
- * signature its connection is linked to is the only thing that identifies it.
+ * The signature an unmapped hole is known by. A ghost has no name of its own, so the
+ * signature its connection is linked to is the only thing that identifies it, and its
+ * type the only thing that says what is on the far side.
  */
-export function ghostSignatureIds(
+export function ghostSignatures(
 	systems: MapSystemView[],
 	connections: MapConnection[],
 	sigs: Signature[],
-): Map<number, string> {
-	const out = new Map<number, string>();
+): Map<number, Signature> {
+	const out = new Map<number, Signature>();
 	const ghosts = new Set(systems.filter((s) => s.kind === 'ghost').map((s) => s.id));
 	if (ghosts.size === 0) return out;
 	const byConnection = new Map(
@@ -80,8 +81,8 @@ export function ghostSignatureIds(
 	for (const c of connections) {
 		const sig = byConnection.get(c.id);
 		if (!sig) continue;
-		if (ghosts.has(c.to_system)) out.set(c.to_system, sig.signature_id);
-		if (ghosts.has(c.from_system)) out.set(c.from_system, sig.signature_id);
+		if (ghosts.has(c.to_system)) out.set(c.to_system, sig);
+		if (ghosts.has(c.from_system)) out.set(c.from_system, sig);
 	}
 	return out;
 }

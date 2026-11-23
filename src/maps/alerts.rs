@@ -7,6 +7,7 @@ use sqlx::PgPool;
 
 use crate::alerts::ships::JumpShip;
 use crate::alerts::{AlertDelivery, AlertKind, AlertMention, filters};
+use crate::maps::structures::StructureEventKind;
 
 use super::error::{MapError, Result};
 
@@ -43,6 +44,10 @@ pub struct MapAlert {
     pub ship_type: Option<JumpShip>,
     #[ts(optional)]
     pub jdc_level: Option<i32>,
+    #[ts(optional)]
+    pub fuel_days: Option<i32>,
+    /// Structure alerts only: the events it speaks about. Empty is the kind's usual set.
+    pub structure_events: Vec<StructureEventKind>,
     pub filters: Vec<filters::Rule>,
     pub filter_match: filters::Match,
     pub is_active: bool,
@@ -90,9 +95,35 @@ pub struct SaveAlert {
     #[serde(default)]
     #[ts(optional)]
     pub jdc_level: Option<i32>,
+    /// Structure fuel only: how many days before the fuel runs out to fire.
+    #[serde(default)]
+    #[ts(optional)]
+    pub fuel_days: Option<i32>,
+    /// Structure alerts only: which events to speak about. Left out or empty, the alert
+    /// takes its kind's usual set.
+    #[serde(default)]
+    pub structure_events: Vec<StructureEventKind>,
     #[serde(default)]
     pub filters: Vec<filters::Rule>,
     pub filter_match: filters::Match,
+}
+
+/// The stored choice of structure events. One we no longer know is dropped rather than
+/// failing the alert; none left means the kind's usual set, as if never chosen.
+pub fn decode_structure_events(stored: Option<Vec<String>>) -> Vec<StructureEventKind> {
+    let mut events: Vec<StructureEventKind> = stored
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|kind| StructureEventKind::from_db(kind))
+        .collect();
+    events.sort_unstable();
+    events.dedup();
+    events
+}
+
+/// `None` for no choice, so the column stays null and follows the usual set as it grows.
+fn encode_structure_events(events: &[StructureEventKind]) -> Option<Vec<String>> {
+    (!events.is_empty()).then(|| events.iter().map(|e| e.as_str().to_string()).collect())
 }
 
 struct AlertRow {
@@ -114,6 +145,8 @@ struct AlertRow {
     max_jumps: i32,
     ship_type: Option<String>,
     jdc_level: Option<i32>,
+    fuel_days: Option<i32>,
+    structure_events: Option<Vec<String>>,
     filters: serde_json::Value,
     filter_match: String,
     is_active: bool,
@@ -159,6 +192,8 @@ impl AlertRow {
             max_jumps: self.max_jumps,
             ship_type: self.ship_type.as_deref().and_then(JumpShip::from_db),
             jdc_level: self.jdc_level,
+            fuel_days: self.fuel_days,
+            structure_events: decode_structure_events(self.structure_events),
             filters,
             filter_match,
             is_active: self.is_active,
@@ -178,7 +213,8 @@ async fn rows(pool: &PgPool, map_id: i64, alert_id: Option<i64>) -> Result<Vec<M
                   a.map_webhook_role_id, r.name as "role_name?",
                   a.mention, a.target_solar_system_id, ss.name as "target_system_name?",
                   a.origin_solar_system_id, os.name as "origin_system_name?",
-                  a.max_jumps, a.ship_type, a.jdc_level,
+                  a.max_jumps, a.ship_type, a.jdc_level, a.fuel_days,
+                  a.structure_events,
                   a.filters, a.filter_match, a.is_active,
                   a.disabled_reason, a.last_fired_at, a.created_at
            from map_alerts a
@@ -243,6 +279,29 @@ pub fn validate(body: &SaveAlert) -> Result<()> {
     }
     if body.kind != AlertKind::Proximity && body.origin_solar_system_id.is_some() {
         return invalid("only a proximity alert has a starting point");
+    }
+    if body.kind == AlertKind::StructureFuel {
+        if !(1..=30).contains(&body.fuel_days.unwrap_or(0)) {
+            return invalid("the fuel warning must be between 1 and 30 days ahead");
+        }
+    } else if body.fuel_days.is_some() {
+        return invalid("only a fuel alert has a number of days");
+    }
+    let structure_alert = matches!(
+        body.kind,
+        AlertKind::StructureAttack | AlertKind::StructureFuel
+    );
+    if !structure_alert && !body.structure_events.is_empty() {
+        return invalid("only a structure alert chooses structure events");
+    }
+    // A fuel event on an attack alert would never fire, and saving it would say it does.
+    let fuel_alert = body.kind == AlertKind::StructureFuel;
+    if body
+        .structure_events
+        .iter()
+        .any(|e| e.is_fuel() != fuel_alert)
+    {
+        return invalid("that event belongs to the other kind of structure alert");
     }
     if body.kind == AlertKind::JumpRange {
         if body.ship_type.is_none() {
@@ -375,13 +434,15 @@ pub async fn create(
     user_id: i64,
     body: &SaveAlert,
 ) -> Result<MapAlert> {
+    let structure_events = encode_structure_events(&body.structure_events);
     let id = sqlx::query_scalar!(
         "insert into map_alerts
              (map_id, created_by_user_id, name, kind, delivery, map_webhook_id,
               discord_guild_id, discord_channel_id, map_webhook_role_id, mention,
               target_solar_system_id, origin_solar_system_id, max_jumps, ship_type, jdc_level,
-              filters, filter_match)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+              filters, filter_match, fuel_days, structure_events)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+                 $18, $19)
          returning id",
         map_id,
         user_id,
@@ -400,6 +461,8 @@ pub async fn create(
         body.jdc_level,
         serde_json::to_value(&body.filters).unwrap_or_else(|_| serde_json::json!([])),
         body.filter_match.as_str(),
+        body.fuel_days,
+        structure_events.as_deref(),
     )
     .fetch_one(pool)
     .await?;
@@ -415,13 +478,15 @@ pub async fn update(
     user_id: i64,
     body: &SaveAlert,
 ) -> Result<MapAlert> {
+    let structure_events = encode_structure_events(&body.structure_events);
     let updated = sqlx::query!(
         "update map_alerts set
              name = $3, kind = $4, delivery = $5, map_webhook_id = $6,
              discord_guild_id = $7, discord_channel_id = $8, map_webhook_role_id = $9,
              mention = $10, target_solar_system_id = $11, origin_solar_system_id = $12,
              max_jumps = $13, ship_type = $14, jdc_level = $15,
-             filters = $16, filter_match = $17, updated_at = now()
+             filters = $16, filter_match = $17, fuel_days = $18,
+             structure_events = $19, updated_at = now()
          where id = $1 and map_id = $2",
         alert_id,
         map_id,
@@ -440,6 +505,8 @@ pub async fn update(
         body.jdc_level,
         serde_json::to_value(&body.filters).unwrap_or_else(|_| serde_json::json!([])),
         body.filter_match.as_str(),
+        body.fuel_days,
+        structure_events.as_deref(),
     )
     .execute(pool)
     .await?;

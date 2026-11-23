@@ -130,6 +130,25 @@ describe('JumpTracker', () => {
 		expect(tracker.prompt).toBeNull();
 	});
 
+	it('maps nothing for a filament into abyssal space, even with a hole waiting', async () => {
+		const base = fakeHost();
+		const { host, trackJump, resolveGhost, setPilots } = fakeHost({
+			systems: () => [system(1, 100), ghost(2)],
+			connections: () => [conn(10, 1, 2)],
+			sigs: () => [scanned],
+			resolveSystem: async (id) => ({
+				...(await base.host.resolveSystem(id))!,
+				name: 'AD041',
+				wormhole_class_id: 20,
+			}),
+		});
+		const tracker = new JumpTracker(host);
+		await fly(tracker, setPilots, 100, 32000041);
+		expect(trackJump).not.toHaveBeenCalled();
+		expect(resolveGhost).not.toHaveBeenCalled();
+		expect(tracker.prompt).toBeNull();
+	});
+
 	it('still records a jump into an ignored system somebody placed by hand', async () => {
 		const { host, trackJump, setPilots } = fakeHost({
 			systems: () => [system(1, 100), system(2, 200)],

@@ -1035,5 +1035,13 @@ mod tests {
             );
         }
         assert!(k162.iter().any(|t| t.target_class == Some(POCHVEN)));
+        // Thera, the shattered frigate holes and the five drifter systems open holes of
+        // their own, and the far side of each is a K162 leading back in.
+        for class in 12..=18 {
+            assert!(
+                k162.iter().any(|t| t.target_class == Some(class)),
+                "no K162 leads to {class}"
+            );
+        }
     }
 }

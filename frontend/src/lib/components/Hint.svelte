@@ -34,7 +34,12 @@
 </script>
 
 <Tooltip.Root
-	bind:open={() => open, (next) => (open = next && (!clippedOnly || clipped(trigger)))}
+	bind:open={
+		() => open,
+		// `disabled` stops a new hover, not one already counting down: text that went away
+		// while the pointer rested here must not open an empty hint.
+		(next) => (open = next && !!text && (!clippedOnly || clipped(trigger)))
+	}
 	disabled={!text}
 >
 	<Tooltip.Trigger bind:ref={trigger}>

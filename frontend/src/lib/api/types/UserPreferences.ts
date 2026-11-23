@@ -4,4 +4,8 @@ export type UserPreferences = {
 /**
  * The game's icon on a wormhole effect badge; off shows the effect's letter instead.
  */
-effect_icons: boolean, };
+effect_icons: boolean, 
+/**
+ * The route drawn next to a jump count in the lists, a mark per system on the way.
+ */
+route_previews: boolean, };

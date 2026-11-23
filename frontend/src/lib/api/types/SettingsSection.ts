@@ -13,7 +13,15 @@ constant_width_enabled: boolean, bookmark_format_wormhole: string, bookmark_form
  * This app's naming convention. The legacy app has no such choice and writes none, so
  * a file without it keeps the chain.
  */
-naming_strategy?: NamingStrategyKind, bookmark_ignored_alias: string | null, home_solarsystem_id: number | null, 
+naming_strategy?: NamingStrategyKind, bookmark_ignored_alias: string | null, 
+/**
+ * The first home system, which is all the legacy app reads.
+ */
+home_solarsystem_id: number | null, 
+/**
+ * Every home system. A file without it has the one above.
+ */
+home_solarsystem_ids?: Array<number>, 
 /**
  * Oldest first. On import only the newest two are kept.
  */

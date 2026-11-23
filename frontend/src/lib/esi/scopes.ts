@@ -3,7 +3,9 @@
 // ones are never asked for at sign-in or in the introduction; they are granted on purpose,
 // from the settings page.
 
+import BellRingIcon from '@lucide/svelte/icons/bell-ring';
 import BuildingIcon from '@lucide/svelte/icons/building-2';
+import FuelIcon from '@lucide/svelte/icons/fuel';
 import MapPinIcon from '@lucide/svelte/icons/map-pin';
 import RouteIcon from '@lucide/svelte/icons/route';
 import ShieldIcon from '@lucide/svelte/icons/shield';
@@ -12,6 +14,8 @@ import type { Component } from 'svelte';
 
 export const LOCATION_SCOPE = 'esi-location.read_location.v1';
 export const STRUCTURES_SCOPE = 'esi-universe.read_structures.v1';
+export const NOTIFICATIONS_SCOPE = 'esi-characters.read_notifications.v1';
+export const CORPORATION_STRUCTURES_SCOPE = 'esi-corporations.read_structures.v1';
 
 export interface EsiScope {
 	scope: string;
@@ -70,6 +74,25 @@ export const OPTIONAL_SCOPES: EsiScope[] = [
 			'EVE shows to pilots on its docking list, so the map names it once one of them ' +
 			'with this permission docks there.',
 		icon: BuildingIcon,
+	},
+	{
+		scope: NOTIFICATIONS_SCOPE,
+		name: 'Notifications',
+		blurb: "Tells the maps you share structures with when one of your corporation's is attacked.",
+		body:
+			'Your in-game notifications. Only the ones about structures are kept: a structure, ' +
+			'tower, customs office or skyhook under attack, reinforced, lost or low on fuel. ' +
+			'Nothing is read until you share structures with a map, and then only for that map.',
+		icon: BellRingIcon,
+	},
+	{
+		scope: CORPORATION_STRUCTURES_SCOPE,
+		name: 'Corporation structures',
+		blurb: 'Shows the maps you share structures with how long their fuel lasts.',
+		body:
+			"Your corporation's structure list with its fuel timers, so a map can warn days " +
+			'before one runs dry. EVE only answers for a character with the Station Manager role.',
+		icon: FuelIcon,
 	},
 ];
 

@@ -1,5 +1,10 @@
 <script lang="ts">
 	// Route-calculation settings, stored per user per map.
+	import { toast } from 'svelte-sonner';
+
+	import { invalidateAll } from '$app/navigation';
+	import { page } from '$app/state';
+	import { api, errorMessage } from '$lib/api/client';
 	import SlidersHorizontalIcon from '@lucide/svelte/icons/sliders-horizontal';
 	import { Slider } from '$lib/components/ui/slider';
 
@@ -30,6 +35,20 @@
 	const PREFS = ROUTE_PREFS.map(short);
 	const LIFETIMES = ROUTE_LIFETIMES.map(short);
 	const MASSES = ROUTE_MASSES.map(short);
+
+	let savingPreviews = $state(false);
+	async function setRoutePreviews(on: boolean) {
+		savingPreviews = true;
+		try {
+			await api.updatePreferences({ route_previews: on });
+			// The layout loads the preferences with every page, so that is what gets refreshed.
+			await invalidateAll();
+		} catch (err) {
+			toast.error(errorMessage(err));
+		} finally {
+			savingPreviews = false;
+		}
+	}
 
 	function choose(field: RouteChoiceField, value: string) {
 		const patch = routeChoicePatch(field, value);
@@ -124,6 +143,17 @@
 				checked={settings?.route_use_evescout ?? false}
 				onCheckedChange={(v) => map.patchUserSettings({ route_use_evescout: v })}
 				data-testid="setting-evescout"
+			/>
+		</label>
+		<!-- The account's, not this map's like the rest: it is about how lists look, and is
+		     the same switch as on the display settings page. -->
+		<label class="flex items-center justify-between gap-2 border-t border-border/50 pt-3 text-xs">
+			Show routes in lists
+			<Switch
+				checked={page.data.preferences?.route_previews ?? true}
+				disabled={savingPreviews}
+				onCheckedChange={setRoutePreviews}
+				data-testid="setting-route-previews"
 			/>
 		</label>
 	</Popover.Content>

@@ -3813,6 +3813,56 @@
         ]
       }
     },
+    "/api/maps/{id}/structures": {
+      "get": {
+        "tags": [
+          "structures"
+        ],
+        "summary": "`GET /api/maps/{id}/structures`: what happened to the shared structures this week, and\nhow long their fuel lasts. Member+: when a structure runs dry is not for someone\nhanded a link, and a viewer is one grant away from that.",
+        "operationId": "map_structures",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The map",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapStructures"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/maps/{id}/systems/add": {
       "post": {
         "tags": [
@@ -6972,7 +7022,9 @@
         "enum": [
           "killmail",
           "proximity",
-          "jump_range"
+          "jump_range",
+          "structure_attack",
+          "structure_fuel"
         ]
       },
       "AlertMention": {
@@ -8194,6 +8246,7 @@
           "delivery",
           "mention",
           "max_jumps",
+          "structure_events",
           "filters",
           "filter_match",
           "is_active",
@@ -8227,6 +8280,13 @@
             "items": {
               "$ref": "#/components/schemas/Rule"
             }
+          },
+          "fuel_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
           },
           "id": {
             "type": "integer",
@@ -8308,6 +8368,13 @@
                 "$ref": "#/components/schemas/JumpShip"
               }
             ]
+          },
+          "structure_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StructureEventKind"
+            },
+            "description": "Structure alerts only: the events it speaks about. Empty is the kind's usual set."
           },
           "target_solar_system_id": {
             "type": [
@@ -8897,6 +8964,26 @@
           },
           {
             "type": "object",
+            "description": "Something happened to a structure a member shares with this map, or its fuel timers\nwere read again, or who shares changed.",
+            "required": [
+              "map_id",
+              "type"
+            ],
+            "properties": {
+              "map_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "structures_changed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "The command journal grew or an entry was undone, so open clients should refetch\nthe history (and, after an undo, the map itself).",
             "required": [
               "map_id",
@@ -9258,6 +9345,153 @@
           }
         }
       },
+      "MapStructure": {
+        "type": "object",
+        "description": "An Upwell structure a member shares, with its fuel timer.",
+        "required": [
+          "structure_id",
+          "corporation_id",
+          "state",
+          "updated_at"
+        ],
+        "properties": {
+          "constellation_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "corporation_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "corporation_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fuel_expires": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Absent once it has run dry (or for a structure that burns none)."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "region": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With the two ids below, enough for a row to offer the system's menu."
+          },
+          "region_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "security": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "solar_system_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "state": {
+            "type": "string",
+            "description": "ESI's state, e.g. `shield_vulnerable`, `armor_reinforce`."
+          },
+          "state_timer_end": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "structure_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "system_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "type_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When ESI last listed it. The list is read hourly, so the state can be that old."
+          },
+          "wormhole_class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "MapStructures": {
+        "type": "object",
+        "description": "What the structures card shows.",
+        "required": [
+          "sharers",
+          "events",
+          "structures"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StructureEvent"
+            },
+            "description": "The last week, newest first."
+          },
+          "sharers": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many of the map's members share their structures with it, the caller included."
+          },
+          "structures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MapStructure"
+            },
+            "description": "Soonest out of fuel first."
+          }
+        }
+      },
       "MapSystemView": {
         "oneOf": [
           {
@@ -9473,6 +9707,7 @@
         "description": "A user's per-map preferences.",
         "required": [
           "tracking_allowed",
+          "structures_shared",
           "show_threat_level",
           "compact_signature_list",
           "show_statics_first",
@@ -9597,6 +9832,10 @@
           },
           "show_threat_level": {
             "type": "boolean"
+          },
+          "structures_shared": {
+            "type": "boolean",
+            "description": "Let this map see the structures of this user's corporations: attacks, and fuel."
           },
           "suggest_alias": {
             "type": "boolean",
@@ -10555,6 +10794,14 @@
               "$ref": "#/components/schemas/Rule"
             }
           },
+          "fuel_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Structure fuel only: how many days before the fuel runs out to fire."
+          },
           "jdc_level": {
             "type": [
               "integer",
@@ -10608,6 +10855,13 @@
                 "$ref": "#/components/schemas/JumpShip"
               }
             ]
+          },
+          "structure_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StructureEventKind"
+            },
+            "description": "Structure alerts only: which events to speak about. Left out or empty, the alert\ntakes its kind's usual set."
           },
           "target_solar_system_id": {
             "type": [
@@ -11209,7 +11463,19 @@
               "integer",
               "null"
             ],
-            "format": "int64"
+            "format": "int64",
+            "description": "The first home system, which is all the legacy app reads."
+          },
+          "home_solarsystem_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Every home system. A file without it has the one above."
           },
           "layout": {
             "$ref": "#/components/schemas/MapLayout"
@@ -11981,6 +12247,175 @@
           }
         }
       },
+      "StructureEvent": {
+        "type": "object",
+        "description": "One thing that happened to a structure, with every id it carries named.",
+        "required": [
+          "id",
+          "kind",
+          "corporation_id",
+          "occurred_at"
+        ],
+        "properties": {
+          "aggressor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who is shooting, as far as the notification says and we could name."
+          },
+          "aggressor_alliance": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "aggressor_corporation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "armor": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "constellation_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "corporation_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "corporation_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hull": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/StructureEventKind"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "region": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With the two ids below, enough for a row to offer the system's menu."
+          },
+          "region_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "security": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "shield": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Percent left."
+          },
+          "solar_system_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "structure_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The structure's own name, or the planet a customs office or skyhook sits on. A\ntower has neither."
+          },
+          "system_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timer_ends_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the reinforcement timer this started runs out."
+          },
+          "type_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "type_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "wormhole_class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "StructureEventKind": {
+        "type": "string",
+        "description": "What an in-game notification said happened to a structure.",
+        "enum": [
+          "under_attack",
+          "lost_shields",
+          "lost_armor",
+          "reinforced",
+          "destroyed",
+          "fuel_low",
+          "low_power",
+          "reagents_low",
+          "unanchoring",
+          "anchoring",
+          "online",
+          "high_power",
+          "services_offline"
+        ]
+      },
       "Subject": {
         "type": "string",
         "description": "What a rule is about.",
@@ -12637,6 +13072,12 @@
               "null"
             ]
           },
+          "structures_shared": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "suggest_alias": {
             "type": [
               "boolean",
@@ -12749,6 +13190,12 @@
               "boolean",
               "null"
             ]
+          },
+          "route_previews": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         }
       },
@@ -12815,12 +13262,17 @@
       "UserPreferences": {
         "type": "object",
         "required": [
-          "effect_icons"
+          "effect_icons",
+          "route_previews"
         ],
         "properties": {
           "effect_icons": {
             "type": "boolean",
             "description": "The game's icon on a wormhole effect badge; off shows the effect's letter instead."
+          },
+          "route_previews": {
+            "type": "boolean",
+            "description": "The route drawn next to a jump count in the lists, a mark per system on the way."
           }
         }
       },
@@ -13023,11 +13475,15 @@
     },
     {
       "name": "alerts",
-      "description": "What a map watches for and where it tells people: proximity, killmail and jump-range alerts, their delivery to Discord channels or DMs, the roles that can be mentioned, and the webhooks a map posts to."
+      "description": "What a map watches for and where it tells people: proximity, killmail, jump-range and structure alerts, their delivery to Discord channels or DMs, the roles that can be mentioned, and the webhooks a map posts to."
     },
     {
       "name": "killmails",
       "description": "Recent kills in and around the chain, as the map's killmail feed shows them."
+    },
+    {
+      "name": "structures",
+      "description": "The structures a map's members share with it: attacks and fuel warnings from their in-game notifications, and the fuel timers of their corporations' Upwell structures."
     },
     {
       "name": "search",

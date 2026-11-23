@@ -14,9 +14,16 @@ export const SYSTEM_LIST =
 /** As SYSTEM_LIST, with a hint/badge track before the indicator (the command palette). */
 export const SYSTEM_LIST_HINT =
 	'grid grid-cols-[min-content_minmax(0,1fr)_minmax(0,0.8fr)_min-content_minmax(0,0.7fr)_min-content] items-center gap-x-2';
-/** As SYSTEM_LIST, with a trailing auto track for row actions (watchlist, find). */
+/**
+ * As SYSTEM_LIST, with a trailing auto track for row actions (watchlist, find). The track
+ * before it holds the jump count, and the route strip once the panel is wide enough to draw
+ * one: from there the name and region take what they need and the route gets the rest.
+ * The class track is a fixed width there: a header spanning it and the name would otherwise
+ * be shared out between the two now that neither is flexible, and push the names away
+ * from their class letters.
+ */
 export const SYSTEM_LIST_ACTIONS =
-	'grid grid-cols-[min-content_minmax(0,1fr)_minmax(0,0.8fr)_min-content_min-content_auto] items-center gap-x-2';
+	'grid grid-cols-[min-content_minmax(0,1fr)_minmax(0,0.8fr)_min-content_min-content_auto] items-center gap-x-2 @[36rem]/routes:grid-cols-[1.5rem_minmax(0,auto)_minmax(0,auto)_min-content_minmax(min-content,1fr)_auto]';
 
 /** A full row inside one of the lists above. */
 export const SYSTEM_ROW = 'col-span-full grid grid-cols-subgrid items-center gap-x-2';

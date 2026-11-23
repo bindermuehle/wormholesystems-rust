@@ -3,8 +3,8 @@
 //! estimate (`jumps_count` / `jumps_mass_sum` on [`MapConnection`](super::MapConnection)).
 //!
 //! [`record_transit`] runs on every observed system change of a tracked character: stargate
-//! hops are ignored, and on each map where the character's user opted into tracking
-//! (Member+) the transit lands on the matching wormhole connection, or as a pending row
+//! hops and trips into abyssal space are ignored, and on each map where the character's
+//! user opted into tracking (Member+) the transit lands on the matching wormhole connection, or as a pending row
 //! (`connection_id` null) when the hole isn't mapped yet. Pending rows are claimed by a
 //! connection created within 120 seconds ([`claim_pending`]) and pruned after 10 minutes
 //! otherwise. Masses are hull masses from the seeded `types` table; in game the effective
@@ -17,6 +17,7 @@ use sqlx::PgPool;
 use super::access::require_role;
 use super::command::{CommandOutput, Effect, MapCommand, Tx, run};
 use super::error::{MapError, Result};
+use super::naming::bookmark::is_abyssal_class;
 use super::store;
 use super::store::jumps::JumpRow;
 use super::{Actor, Role};
@@ -422,6 +423,34 @@ const CLAIM_WINDOW_SECONDS: i32 = 120;
 /// How long pending rows live before pruning.
 const UNCLAIMED_LIFETIME_MINUTES: i32 = 10;
 
+/// Whether a move between two systems can have gone through a wormhole at all.
+async fn could_be_a_hole(pool: &PgPool, from: i64, to: i64) -> Result<bool> {
+    // Gate travel is never a wormhole jump.
+    let is_gate = sqlx::query_scalar!(
+        "select exists(
+             select 1 from stargates
+             where solar_system_id = $1 and destination_system_id = $2
+         )",
+        from,
+        to,
+    )
+    .fetch_one(pool)
+    .await?
+    .unwrap_or(false);
+    if is_gate {
+        return Ok(false);
+    }
+
+    // Nor is a filament into abyssal space, or the way back out of it.
+    let classes = sqlx::query_scalar!(
+        "select wormhole_class_id from solar_systems where id = any($1)",
+        &[from, to],
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(!classes.into_iter().any(is_abyssal_class))
+}
+
 /// Record an observed transit of a tracked character between two systems. Called from
 /// the location poller on every system change; failures must never break polling, so
 /// callers log-and-continue.
@@ -431,19 +460,7 @@ pub async fn record_transit(
     from_solar_system_id: i64,
     to_solar_system_id: i64,
 ) -> Result<()> {
-    // Gate travel is never a wormhole jump.
-    let is_gate = sqlx::query_scalar!(
-        "select exists(
-             select 1 from stargates
-             where solar_system_id = $1 and destination_system_id = $2
-         )",
-        from_solar_system_id,
-        to_solar_system_id,
-    )
-    .fetch_one(pool)
-    .await?
-    .unwrap_or(false);
-    if is_gate {
+    if !could_be_a_hole(pool, from_solar_system_id, to_solar_system_id).await? {
         return Ok(());
     }
 

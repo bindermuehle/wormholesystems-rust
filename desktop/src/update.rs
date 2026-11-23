@@ -123,6 +123,8 @@ pub(crate) fn install(update: &Update) -> Result<(), String> {
 /// Start the new version. An AppImage runs from a mount that goes away with this process,
 /// so start the file itself again, a moment later so the shortcuts are free by then.
 pub(crate) fn restart(cx: &mut gpui_kit::App) {
+    // The new version starts while this one is still closing, and must not hand over to it.
+    crate::instance::release();
     if let Some(appimage) = std::env::var_os("APPIMAGE") {
         let started = std::process::Command::new("sh")
             .arg("-c")

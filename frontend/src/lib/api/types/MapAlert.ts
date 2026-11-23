@@ -5,8 +5,13 @@ import type { AlertMention } from "./AlertMention";
 import type { JumpShip } from "./JumpShip";
 import type { Match } from "./Match";
 import type { Rule } from "./Rule";
+import type { StructureEventKind } from "./StructureEventKind";
 
 /**
  * One alert as the settings page shows it.
  */
-export type MapAlert = { id: number, map_id: number, name: string, kind: AlertKind, delivery: AlertDelivery, map_webhook_id?: number, webhook_name?: string, discord_channel_id?: string, map_webhook_role_id?: number, role_name?: string, mention: AlertMention, target_solar_system_id?: number, target_system_name?: string, origin_solar_system_id?: number, origin_system_name?: string, max_jumps: number, ship_type?: JumpShip, jdc_level?: number, filters: Array<Rule>, filter_match: Match, is_active: boolean, disabled_reason?: string, last_fired_at?: string, created_at: string, };
+export type MapAlert = { id: number, map_id: number, name: string, kind: AlertKind, delivery: AlertDelivery, map_webhook_id?: number, webhook_name?: string, discord_channel_id?: string, map_webhook_role_id?: number, role_name?: string, mention: AlertMention, target_solar_system_id?: number, target_system_name?: string, origin_solar_system_id?: number, origin_system_name?: string, max_jumps: number, ship_type?: JumpShip, jdc_level?: number, fuel_days?: number, 
+/**
+ * Structure alerts only: the events it speaks about. Empty is the kind's usual set.
+ */
+structure_events: Array<StructureEventKind>, filters: Array<Rule>, filter_match: Match, is_active: boolean, disabled_reason?: string, last_fired_at?: string, created_at: string, };

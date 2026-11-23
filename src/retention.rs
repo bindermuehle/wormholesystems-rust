@@ -12,6 +12,8 @@ use sqlx::PgPool;
 pub const DELIVERY_RETENTION_DAYS: i32 = 30;
 /// How far back an alert's audit trail reaches.
 pub const ALERT_EVENT_RETENTION_DAYS: i32 = 90;
+/// How long a structure event is kept.
+pub const STRUCTURE_EVENT_RETENTION_DAYS: i32 = 30;
 
 /// What one sweep removed.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -19,6 +21,7 @@ pub struct Swept {
     pub deliveries: u64,
     pub alert_events: u64,
     pub sessions: u64,
+    pub structure_events: u64,
 }
 
 /// Spawn the daily sweep. Returns immediately; the loop runs for the process lifetime.
@@ -40,6 +43,10 @@ pub async fn sweep(pool: &PgPool) -> sqlx::Result<Swept> {
         "delete from map_alert_deliveries d
          where d.created_at < now() - make_interval(days => $1)
            and (d.dedup_key like 'killmail:%'
+                -- A structure event is only news for two hours, and a fuel key names the
+                -- moment the fuel runs out, at most a month after it first fired.
+                or d.dedup_key like 'structure_event:%'
+                or d.dedup_key like 'fuel:%'
                 or (d.dedup_key like 'placement:%'
                     and not exists (
                         select 1 from map_solar_systems s
@@ -67,9 +74,23 @@ pub async fn sweep(pool: &PgPool) -> sqlx::Result<Swept> {
         .await?
         .rows_affected();
 
+    // The card shows a week of events; the rest is kept a while for whoever asks what
+    // happened. A corporation nobody reads for any more keeps its last list for a week.
+    let structure_events = sqlx::query!(
+        "delete from structure_events where occurred_at < now() - make_interval(days => $1)",
+        STRUCTURE_EVENT_RETENTION_DAYS,
+    )
+    .execute(pool)
+    .await?
+    .rows_affected();
+    sqlx::query!("delete from corporation_structures where updated_at < now() - interval '7 days'")
+        .execute(pool)
+        .await?;
+
     Ok(Swept {
         deliveries,
         alert_events,
         sessions,
+        structure_events,
     })
 }

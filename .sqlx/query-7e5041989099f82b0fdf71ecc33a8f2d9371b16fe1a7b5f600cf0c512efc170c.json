@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select is_home from map_solar_systems where id = $1 and map_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "is_home",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_solar_systems",
+            "name": "is_home"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7e5041989099f82b0fdf71ecc33a8f2d9371b16fe1a7b5f600cf0c512efc170c"
+}

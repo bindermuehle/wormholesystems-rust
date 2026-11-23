@@ -10,6 +10,7 @@ import type { JumpShip } from '$lib/api/types/JumpShip';
 import type { MapAlert } from '$lib/api/types/MapAlert';
 import type { Side } from '$lib/api/types/Side';
 import type { Subject } from '$lib/api/types/Subject';
+import { defaultEvents, eventsOf } from '$lib/map/structures';
 
 export const ALERT_KINDS: { value: AlertKind; label: string; blurb: string }[] = [
 	{
@@ -29,7 +30,27 @@ export const ALERT_KINDS: { value: AlertKind; label: string; blurb: string }[] =
 			'Fires when a k-space exit lands within a capital jump of a system you name. ' +
 			'Measured in light years for the hull you pick, not in gates.',
 	},
+	{
+		value: 'structure_attack',
+		label: 'Structure attacks and changes',
+		blurb:
+			'Fires when something is done to a structure, tower, customs office or skyhook that a ' +
+			'member shares with this map. You pick which events. Members share theirs from the ' +
+			'Structures card on the map.',
+	},
+	{
+		value: 'structure_fuel',
+		label: 'Structure fuel',
+		blurb:
+			'Fires a set number of days before a shared structure runs out of fuel, and on the ' +
+			"fuel events you pick, such as EVE's own warning for a tower or a Metenox.",
+	},
 ];
+
+/** The kinds that are about the members' structures rather than the chain. */
+export function isStructureKind(kind: AlertKind): boolean {
+	return kind === 'structure_attack' || kind === 'structure_fuel';
+}
 
 export function kindLabel(kind: AlertKind): string {
 	return ALERT_KINDS.find((k) => k.value === kind)?.label ?? kind;
@@ -105,6 +126,17 @@ export const DISABLED_REASON = {
 /** One line saying what a saved alert watches for, for its row in the list. */
 export function alertSummary(alert: MapAlert): string {
 	const target = alert.target_system_name ?? 'a system';
+	if (alert.kind === 'structure_attack' || alert.kind === 'structure_fuel') {
+		const chosen =
+			alert.structure_events.length > 0 ? alert.structure_events : defaultEvents(alert.kind);
+		const events = eventsOf(alert.kind)
+			.filter((e) => chosen.includes(e.kind))
+			.map((e) => e.label.toLowerCase());
+		if (alert.kind === 'structure_attack') return `Shared structures: ${events.join(', ')}`;
+		const days = alert.fuel_days ?? 0;
+		const ahead = `${days} ${days === 1 ? 'day' : 'days'} of fuel left`;
+		return `Shared structures: ${[ahead, ...events].join(', ')}`;
+	}
 	if (alert.kind === 'jump_range') {
 		const ship = shipLabel(alert.ship_type ?? null) ?? 'a capital';
 		return `An exit within ${ship} range (JDC ${alert.jdc_level ?? 0}) of ${target}`;

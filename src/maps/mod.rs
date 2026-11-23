@@ -25,6 +25,7 @@ pub mod search;
 pub mod signatures;
 pub mod solar_system;
 mod store;
+pub mod structures;
 pub mod tracking;
 pub mod transfer;
 pub mod user_settings;

@@ -22,7 +22,7 @@ A chain alias says which way home is on its own: `21` sits inside `2`. A per-sys
 - the bookmark back toward home gets the return format (`*1 ABC C5` by default), the same as in the standard convention;
 - a system's parent is never counted among its children.
 
-Without a home system, the mapper can't tell a system's parent from its children, so the parent's number counts as taken and a first hole may be suggested as `2`.
+A chain with no home system in it is worked out from its pinned systems instead. With neither, the mapper can't tell a system's parent from its children, so the parent's number counts as taken and a first hole may be suggested as `2`.
 
 ## Example
 

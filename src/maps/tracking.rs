@@ -15,11 +15,13 @@ use serde::{Deserialize, Serialize};
 use super::command::{CommandOutput, Effect, MapCommand, Sequence, Tx};
 use super::connection::{AddConnection, SetConnectionStatus, connect};
 use super::error::{MapError, Result};
+use super::naming::bookmark::{is_abyssal_class, is_wormhole_class};
 use super::restore::RemoveRestored;
 use super::signatures::{LinkSignature, UnlinkSignature, UpdateSignature};
 use super::solar_system::{AddSystem, SetAlias};
 use super::{ConnectionType, MassStatus, SignatureGroup, TimeStatus, WormholeSize};
 use crate::realtime::MapEvent;
+use crate::util::security::ccp_round_security;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS, utoipa::ToSchema)]
 #[ts(export)]
@@ -64,6 +66,9 @@ pub(super) async fn apply_track_jump(tx: &mut Tx<'_>, cmd: TrackJump) -> Result<
         None => None,
     };
 
+    // The connection this jump went through, if the map has it. One that another signature
+    // in this system already is, is not it: the pilot named a different hole, and two holes
+    // can lead to the same system, so that jump draws its own edge below.
     let existing = sqlx::query_scalar!(
         r#"select c.id from map_connections c
            join map_solar_systems f on f.id = c.from_system
@@ -71,10 +76,18 @@ pub(super) async fn apply_track_jump(tx: &mut Tx<'_>, cmd: TrackJump) -> Result<
            where c.map_id = $1
              and ((f.solar_system_id = $2 and t.solar_system_id = $3)
                   or (f.solar_system_id = $3 and t.solar_system_id = $2))
+             and not exists (
+                 select 1 from signatures s
+                 where s.map_id = c.map_id and s.connection_id = c.id
+                   and s.solar_system_id = $2 and s.id <> $4)
+           order by exists (
+                 select 1 from signatures s where s.id = $4 and s.connection_id = c.id) desc,
+               c.id
            limit 1"#,
         cmd.map_id,
         from_system,
         cmd.to_solar_system_id,
+        cmd.signature_pk,
     )
     .fetch_optional(&mut **tx)
     .await?;
@@ -88,6 +101,10 @@ pub(super) async fn apply_track_jump(tx: &mut Tx<'_>, cmd: TrackJump) -> Result<
 
     let (to_placement, added, alias_undo) = place_target(tx, &cmd, placed).await?;
 
+    let size = match cmd.size {
+        Some(size) => Some(size),
+        None => size_between(tx, from_system, cmd.to_solar_system_id).await?,
+    };
     let effect = connect(
         tx,
         AddConnection {
@@ -95,7 +112,7 @@ pub(super) async fn apply_track_jump(tx: &mut Tx<'_>, cmd: TrackJump) -> Result<
             from_system: cmd.from_map_solar_system_id,
             to_system: to_placement,
             kind: ConnectionType::Wormhole,
-            size: cmd.size,
+            size,
         },
     )
     .await?;
@@ -219,6 +236,60 @@ async fn check_origin(tx: &mut Tx<'_>, cmd: &TrackJump) -> Result<i64> {
     Ok(from_system)
 }
 
+/// One end of a hole, as far as its size can be read off it.
+struct End {
+    solar_system_id: i64,
+    class: Option<i32>,
+    security: f64,
+}
+
+/// The size a hole between two systems has to be, when where it leads settles it: nothing
+/// bigger than a frigate reaches a C13, nothing bigger than a battlecruiser reaches a C1,
+/// and the same goes for Thera to highsec and Turnur to wormhole space. The pilot's own
+/// pick and the signature's type come first; this is for the jump that said neither.
+/// Mirrors `heuristicSize` in the frontend, which does the same for a hand-drawn line.
+fn size_from_ends(a: &End, b: &End) -> Option<WormholeSize> {
+    const TURNUR: i64 = 30002086;
+    const THERA_CLASS: i32 = 12;
+    const HIGHSEC_CLASS: i32 = 7;
+
+    let classes = [a.class, b.class];
+    if classes.contains(&Some(13)) {
+        return Some(WormholeSize::Small);
+    }
+    if classes.contains(&Some(1)) {
+        return Some(WormholeSize::Medium);
+    }
+    let highsec = |e: &End| e.class == Some(HIGHSEC_CLASS) || ccp_round_security(e.security) >= 0.5;
+    let thera = |e: &End| e.class == Some(THERA_CLASS);
+    let turnur = |e: &End| e.solar_system_id == TURNUR;
+    let wormhole = |e: &End| is_wormhole_class(e.class);
+    let either =
+        |x: &dyn Fn(&End) -> bool, y: &dyn Fn(&End) -> bool| (x(a) && y(b)) || (x(b) && y(a));
+    (either(&thera, &highsec) || either(&turnur, &wormhole)).then_some(WormholeSize::Medium)
+}
+
+async fn size_between(tx: &mut Tx<'_>, from: i64, to: i64) -> Result<Option<WormholeSize>> {
+    let rows = sqlx::query!(
+        "select id, wormhole_class_id, security_status from solar_systems where id = any($1)",
+        &[from, to],
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+    let ends: Vec<End> = rows
+        .into_iter()
+        .map(|r| End {
+            solar_system_id: r.id,
+            class: r.wormhole_class_id,
+            security: r.security_status,
+        })
+        .collect();
+    Ok(match ends.as_slice() {
+        [a, b] => size_from_ends(a, b),
+        _ => None,
+    })
+}
+
 /// A jump through a connection the map already has: link the signature it came through.
 async fn link_existing(
     tx: &mut Tx<'_>,
@@ -252,11 +323,11 @@ async fn link_existing(
     }))
 }
 
-/// The destination's name and its placement, if the map has one. Refuses a destination
-/// the map keeps off.
+/// The destination's name and its placement, if the map has one. Refuses abyssal space and
+/// a destination the map keeps off.
 async fn target_of(tx: &mut Tx<'_>, cmd: &TrackJump) -> Result<(String, Option<i64>)> {
-    let target_name = sqlx::query_scalar!(
-        "select name from solar_systems where id = $1",
+    let target = sqlx::query!(
+        "select name, wormhole_class_id from solar_systems where id = $1",
         cmd.to_solar_system_id,
     )
     .fetch_optional(&mut **tx)
@@ -264,6 +335,14 @@ async fn target_of(tx: &mut Tx<'_>, cmd: &TrackJump) -> Result<(String, Option<i
     .ok_or_else(|| {
         MapError::Validation(format!("unknown solar system {}", cmd.to_solar_system_id))
     })?;
+    let target_name = target.name;
+    // A filament, not a hole. The clients drop these themselves; this is the copy that
+    // decides.
+    if is_abyssal_class(target.wormhole_class_id) {
+        return Err(MapError::Validation(format!(
+            "{target_name} is abyssal space"
+        )));
+    }
 
     let placed = sqlx::query_scalar!(
         "select id from map_solar_systems where map_id = $1 and solar_system_id = $2",
@@ -419,4 +498,33 @@ pub(super) async fn link(
     )
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn end(solar_system_id: i64, class: Option<i32>, security: f64) -> End {
+        End {
+            solar_system_id,
+            class,
+            security,
+        }
+    }
+
+    #[test]
+    fn thera_to_highsec_and_turnur_to_wormhole_space_are_medium() {
+        let thera = end(31000005, Some(12), -0.99);
+        let turnur = end(30002086, Some(8), 0.4);
+        let highsec = end(30000142, Some(7), 0.95);
+        let lowsec = end(30002087, Some(8), 0.3);
+        let c5 = end(31002000, Some(5), -1.0);
+
+        assert_eq!(size_from_ends(&thera, &highsec), Some(WormholeSize::Medium));
+        assert_eq!(size_from_ends(&highsec, &thera), Some(WormholeSize::Medium));
+        assert_eq!(size_from_ends(&thera, &lowsec), None);
+        assert_eq!(size_from_ends(&turnur, &c5), Some(WormholeSize::Medium));
+        assert_eq!(size_from_ends(&turnur, &lowsec), None);
+        assert_eq!(size_from_ends(&c5, &highsec), None);
+    }
 }

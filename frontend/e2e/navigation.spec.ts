@@ -387,9 +387,12 @@ test('viewers see the watchlist read-only', async ({ page, api, browser }) => {
 	const row = viewerPage.getByTestId('watchlist-row');
 	await expect(row).toHaveCount(5);
 	await expect(viewerPage.getByTestId('watchlist-add')).toBeDisabled();
-	// No menu to change anything, but the pin still shows.
-	await expect(row.getByTestId('watchlist-row-menu')).toHaveCount(0);
+	// The row menu is the system's own for a viewer, with nothing that changes the list,
+	// and the pin still shows.
 	await expect(row.first().getByTestId('watchlist-pinned')).toBeVisible();
+	await row.first().getByTestId('watchlist-row-menu').click();
+	await expect(viewerPage.getByTestId('menu-route')).toBeVisible();
+	await expect(viewerPage.getByRole('menuitem', { name: /pin|remove/i })).toHaveCount(0);
 	await ctx.close();
 	void page;
 });

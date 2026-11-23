@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into structure_event_receipts (structure_event_id, character_id)\n         values ($1, $2) on conflict do nothing",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e14adebc1d6945ed0b25c9a84f2d2397b0f8262def714ab3f3b226eb36de6e51"
+}

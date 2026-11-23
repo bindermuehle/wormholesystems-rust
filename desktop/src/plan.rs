@@ -161,6 +161,10 @@ pub(crate) fn plan_jump(
     let Some(target) = target_of(client, existing.as_ref(), to)? else {
         return Ok(Plan::Skip(format!("No system called {to}")));
     };
+    // A filament changes the local channel like a jump does, with no hole behind it.
+    if crate::classes::is_abyssal(target.class) {
+        return Ok(Plan::Skip(format!("{to} is abyssal space")));
+    }
     if context
         .stargates
         .get(&origin.solar_system_id)
@@ -441,6 +445,8 @@ mod tests {
     /// A map that knows one system, J100001, and places it the way the server would.
     struct FakeMap {
         snapshot: RefCell<MapSnapshot>,
+        /// The class the server gives J100001.
+        class: i64,
         ignored: Vec<i64>,
         tracked: RefCell<Vec<TrackJump>>,
         resolved: RefCell<Vec<ResolveGhost>>,
@@ -450,6 +456,7 @@ mod tests {
         fn new(snapshot: MapSnapshot) -> Self {
             FakeMap {
                 snapshot: RefCell::new(snapshot),
+                class: 3,
                 ignored: Vec::new(),
                 tracked: RefCell::default(),
                 resolved: RefCell::default(),
@@ -467,7 +474,7 @@ mod tests {
                 id: J100001,
                 name: "J100001".into(),
                 security: -1.0,
-                wormhole_class_id: Some(3),
+                wormhole_class_id: Some(self.class),
             }))
         }
 
@@ -530,6 +537,15 @@ mod tests {
         let map = FakeMap::new(snapshot());
         assert!(matches!(plan(&map, "Jita", "J100001"), Plan::Skip(_)));
         assert!(matches!(plan(&map, "Amarr", "Nowhere"), Plan::Skip(_)));
+        assert!(map.tracked.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_filament_into_abyssal_space_maps_nothing() {
+        let mut map = FakeMap::new(snapshot());
+        map.class = 21;
+        let plan = plan(&map, "Amarr", "J100001");
+        assert!(matches!(plan, Plan::Skip(why) if why.contains("abyssal")));
         assert!(map.tracked.borrow().is_empty());
     }
 

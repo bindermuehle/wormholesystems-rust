@@ -239,6 +239,46 @@ test('wormhole type and connection can be unset back to Unknown', async ({ brows
 	await ctx.close();
 });
 
+test('two signatures can lead to the same system, each with its own connection', async ({
+	browser,
+	api,
+}) => {
+	const mapId = await createMap(api, 'E2E SigTwoHoles');
+	const near = await addSystem(api, mapId, J122515, { x: 200, y: 200 });
+	const far = await addSystem(api, mapId, JITA, { x: 500, y: 200 });
+	await api.post(`/api/maps/${mapId}/connections/add`, {
+		data: { map_id: mapId, from_system: near, to_system: far, kind: 'wormhole' },
+	});
+
+	const { page, ctx } = await openAsMember(browser, mapId, `?system=${J122515}`);
+	await pasteViaEvent(
+		page,
+		'WHX-601\tCosmic Signature\tWormhole\t\t100%\t1 AU\n' +
+			'WHX-602\tCosmic Signature\tWormhole\t\t100%\t1 AU',
+	);
+	const first = page.getByTestId('sig-row').filter({ hasText: 'WHX-601' });
+	const second = page.getByTestId('sig-row').filter({ hasText: 'WHX-602' });
+
+	await first.getByTestId('sig-connection').click();
+	await page.getByRole('option', { name: /Jita/ }).click();
+	await expect(first.getByTestId('sig-connection')).toContainText('Jita');
+
+	// The only connection to Jita is the first signature's, so this is a second hole.
+	await expect(page.getByRole('option')).toHaveCount(0);
+	await second.getByTestId('sig-connection').click();
+	await page.getByRole('option', { name: /Jita/ }).click();
+	await expect(second.getByTestId('sig-connection')).toContainText('Jita');
+	await expect(first.getByTestId('sig-connection')).toContainText('Jita');
+
+	const view = await (await api.get(`/api/maps/${mapId}`)).json();
+	expect(view.connections).toHaveLength(2);
+	const sigs = await (await api.get(`/api/maps/${mapId}/signatures`)).json();
+	const edges = sigs.map((s: { connection_id: number | null }) => s.connection_id);
+	expect(edges).not.toContain(null);
+	expect(new Set(edges).size).toBe(2);
+	await ctx.close();
+});
+
 test('sorting and category filters with hidden count', async ({ page, api }) => {
 	const mapId = await createMap(api, 'E2E SigSort');
 	await addSystem(api, mapId, J122515, { x: 200, y: 200 });

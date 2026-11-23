@@ -23,6 +23,7 @@ pub mod entities;
 pub mod skyhooks;
 pub mod sovereignty;
 pub mod status;
+pub mod structures;
 pub mod ui;
 
 pub use {
@@ -35,6 +36,7 @@ pub use {
     sovereignty::SovereigntySystem,
     sso::{Sso, SsoConfig},
     status::TranquilityStatus,
+    structures::{CorporationStructure, Notification},
     token::{Token, TokenStore},
     token_cache::TokenCache,
 };
@@ -51,6 +53,9 @@ const DEFAULT_BACKOFF: Duration = Duration::from_secs(60);
 /// The most cached replies kept for conditional requests. A few per tracked character;
 /// past this the whole cache is dropped, which costs one full reply each.
 const CONDITIONAL_CAP: usize = 10_000;
+/// The most pages read of one paged route. Nothing we page comes close; a bogus `X-Pages`
+/// should not turn one call into thousands.
+const MAX_PAGES: u32 = 50;
 
 #[derive(Clone)]
 pub struct EsiClient {
@@ -230,6 +235,38 @@ impl EsiClient {
             .send_checked(self.request(reqwest::Method::GET, path, token), token)
             .await?;
         Ok(resp.json().await?)
+    }
+
+    /// [`get_json`](Self::get_json) for a route that answers in numbered pages: every page,
+    /// in order. `X-Pages` on the first reply says how many there are.
+    async fn get_json_paged<T: DeserializeOwned>(&self, path: &str, token: &str) -> Result<Vec<T>> {
+        let mut all = Vec::new();
+        let mut pages = 1;
+        let mut page = 1;
+        while page <= pages {
+            let resp = self
+                .send_checked(
+                    self.request(
+                        reqwest::Method::GET,
+                        &format!("{path}?page={page}"),
+                        Some(token),
+                    ),
+                    Some(token),
+                )
+                .await?;
+            if page == 1 {
+                pages = resp
+                    .headers()
+                    .get("x-pages")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.trim().parse::<u32>().ok())
+                    .unwrap_or(1)
+                    .min(MAX_PAGES);
+            }
+            all.extend(resp.json::<Vec<T>>().await?);
+            page += 1;
+        }
+        Ok(all)
     }
 
     /// [`get_json`](Self::get_json) for a route polled on a schedule. Inside the reply's

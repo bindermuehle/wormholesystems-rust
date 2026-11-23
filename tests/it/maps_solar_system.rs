@@ -429,6 +429,14 @@ async fn a_pinned_system_will_not_move_but_the_home_system_will() {
     );
 }
 
+async fn homes(pool: &PgPool, map_id: i64) -> Vec<i64> {
+    sqlx::query_scalar("select id from map_solar_systems where map_id = $1 and is_home order by id")
+        .bind(map_id)
+        .fetch_all(pool)
+        .await
+        .expect("homes")
+}
+
 async fn mark_home(pool: &PgPool, actor: wormholesystems::maps::Actor, map_id: i64, id: i64) {
     set_home(
         pool,
@@ -498,10 +506,10 @@ async fn placed_ids(pool: &PgPool, actor: wormholesystems::maps::Actor, map_id: 
         .collect()
 }
 
-/// Home is one-per-map, and undo puts the previous holder back rather than leaving the map
-/// with none.
+/// A map holds a home for each of its chains: a second one replaces nothing, each clears
+/// on its own, and undo takes back only the one it set.
 #[tokio::test]
-async fn a_map_has_one_home_and_undo_returns_the_last_one() {
+async fn a_map_holds_several_homes_and_undo_takes_back_the_last_one() {
     let (pool, _db) = common::db::fresh().await;
     let w = world(&pool).await;
     let first = place_at(&pool, w.owner, w.map_id, SYS_A, 0.0).await;
@@ -509,16 +517,33 @@ async fn a_map_has_one_home_and_undo_returns_the_last_one() {
 
     mark_home(&pool, w.owner, w.map_id, first).await;
     mark_home(&pool, w.owner, w.map_id, second).await;
-    assert_eq!(home_of(&pool, w.map_id).await, Some(second));
+    assert_eq!(homes(&pool, w.map_id).await, vec![first, second]);
 
     undo(&pool, w.owner, MapIdBody { map_id: w.map_id })
         .await
         .unwrap();
-    assert_eq!(home_of(&pool, w.map_id).await, Some(first));
+    assert_eq!(homes(&pool, w.map_id).await, vec![first]);
+    redo(&pool, w.owner, MapIdBody { map_id: w.map_id })
+        .await
+        .unwrap();
+    assert_eq!(homes(&pool, w.map_id).await, vec![first, second]);
 
-    // A rally point is its own mark: setting one leaves the home system alone.
-    rally(&pool, w.owner, w.map_id, second).await.unwrap();
-    assert_eq!(home_of(&pool, w.map_id).await, Some(first));
+    set_home(
+        &pool,
+        w.owner,
+        SetHome {
+            map_id: w.map_id,
+            map_solar_system_id: first,
+            value: false,
+        },
+    )
+    .await
+    .expect("set_home");
+    assert_eq!(homes(&pool, w.map_id).await, vec![second]);
+
+    // A rally point is its own mark: setting one leaves the home systems alone.
+    rally(&pool, w.owner, w.map_id, first).await.unwrap();
+    assert_eq!(homes(&pool, w.map_id).await, vec![second]);
 }
 
 /// A map holds two rally points, oldest first. A third replaces the oldest, and undo
@@ -654,16 +679,6 @@ async fn unrally(
         },
     )
     .await
-}
-
-async fn home_of(pool: &PgPool, map_id: i64) -> Option<i64> {
-    sqlx::query_scalar!(
-        "select id from map_solar_systems where map_id = $1 and is_home",
-        map_id
-    )
-    .fetch_optional(pool)
-    .await
-    .expect("query map_solar_systems")
 }
 
 /// The map's rally points, oldest first.

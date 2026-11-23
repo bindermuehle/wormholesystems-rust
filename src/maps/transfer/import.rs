@@ -202,7 +202,7 @@ async fn import_into_tx(
 async fn known_solarsystem_ids(tx: &mut Tx<'_>, sections: &Sections) -> Result<HashSet<i64>> {
     let mut ids: Vec<i64> = Vec::new();
     if let Some(settings) = &sections.settings {
-        ids.extend(settings.home_solarsystem_id);
+        ids.extend(settings.home_ids());
         ids.extend(settings.rally_ids());
     }
     if let Some(systems) = &sections.solarsystems {
@@ -253,7 +253,7 @@ async fn import_settings(
 }
 
 /// Mark the file's home and rally systems, clearing the marks when the file has none (or
-/// names a system that is not on the map). `coalesce(... , false)` keeps ghosts out: a
+/// names systems that are not on the map). `coalesce(... , false)` keeps ghosts out: a
 /// null system id never equals anything.
 async fn import_home_and_rally(
     tx: &mut Tx<'_>,
@@ -262,10 +262,11 @@ async fn import_home_and_rally(
 ) -> Result<()> {
     sqlx::query!(
         "update map_solar_systems
-         set is_home = coalesce(solar_system_id = $2, false)
-         where map_id = $1 and is_home is distinct from coalesce(solar_system_id = $2, false)",
+         set is_home = coalesce(solar_system_id = any($2), false)
+         where map_id = $1
+           and is_home is distinct from coalesce(solar_system_id = any($2), false)",
         map_id,
-        settings.home_solarsystem_id,
+        &settings.home_ids(),
     )
     .execute(&mut **tx)
     .await?;

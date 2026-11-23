@@ -59,6 +59,9 @@ pub enum MapEvent {
     CharactersChanged { map_id: i64 },
     /// Something died in one of this map's systems.
     KillmailReceived { map_id: i64 },
+    /// Something happened to a structure a member shares with this map, or its fuel timers
+    /// were read again, or who shares changed.
+    StructuresChanged { map_id: i64 },
     /// The command journal grew or an entry was undone, so open clients should refetch
     /// the history (and, after an undo, the map itself).
     HistoryChanged { map_id: i64 },
@@ -80,6 +83,7 @@ impl MapEvent {
             | MapEvent::AccessChanged { map_id }
             | MapEvent::WatchlistChanged { map_id }
             | MapEvent::IgnoredSystemsChanged { map_id }
+            | MapEvent::StructuresChanged { map_id }
             | MapEvent::HistoryChanged { map_id } => map_id,
         }
     }

@@ -252,11 +252,11 @@ async fn a_viewer_reads_the_names_but_cannot_write_one() {
     assert_eq!(stranger.status, StatusCode::UNAUTHORIZED);
 }
 
-/// 0048 moves the maps that named themselves with the echo alias scheme onto the echo
+/// 0051 moves the maps that named themselves with the echo alias scheme onto the echo
 /// strategy. The test database is migrated before any map exists, so the update has only
 /// ever met an empty table there; this runs it against one.
 #[tokio::test]
-async fn migration_0048_moves_echo_maps_onto_the_echo_strategy() {
+async fn migration_0051_moves_echo_maps_onto_the_echo_strategy() {
     let (pool, _db) = common::db::fresh().await;
     let echo = world(&pool).await;
     let other = create_map(
@@ -284,7 +284,7 @@ async fn migration_0048_moves_echo_maps_onto_the_echo_strategy() {
     .unwrap();
 
     sqlx::raw_sql(include_str!(
-        "../../migrations/0048_echo_maps_use_echo_strategy.sql"
+        "../../migrations/0051_echo_maps_use_echo_strategy.sql"
     ))
     .execute(&pool)
     .await

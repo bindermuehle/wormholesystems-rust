@@ -2,10 +2,11 @@
 	// What can be done with a solar system from any menu that names one: put it on the map or
 	// the watchlist, look it up elsewhere, send a pilot there, route to it, and rally on it.
 	// The right-click menu around panel rows and the map node's own menu both render this, so
-	// the two cannot drift apart again. Rendered inside either kind of bits-ui menu: the items
+	// the two cannot drift apart again. Its names can be copied too, for linking in chat. Rendered inside either kind of bits-ui menu: the items
 	// are the same primitives under a context menu and a dropdown.
 	import BanIcon from '@lucide/svelte/icons/ban';
 	import CompassIcon from '@lucide/svelte/icons/compass';
+	import CopyIcon from '@lucide/svelte/icons/copy';
 	import EyeIcon from '@lucide/svelte/icons/eye';
 	import FlagIcon from '@lucide/svelte/icons/flag';
 	import NavigationIcon from '@lucide/svelte/icons/navigation';
@@ -14,6 +15,7 @@
 
 	import type { SystemSearchResult } from '$lib/api/types/SystemSearchResult';
 	import * as ContextMenu from '$lib/components/ui/context-menu';
+	import { copyText } from '$lib/clipboard';
 	import { isWormholeClass } from '$lib/map/classes';
 	import { systemLinkGroups } from '$lib/map/external-links';
 	import { solarSystemId } from '$lib/map/system';
@@ -29,6 +31,15 @@
 	const ignored = $derived(map.ignored.has(system.id));
 	// ESI refuses a destination in wormhole space, so the waypoint menus only offer k-space.
 	const wormhole = $derived(isWormholeClass(system.wormhole_class_id));
+
+	// The constellation's name only comes with a placed system; a search hit has just its id.
+	const names = $derived([
+		{ label: 'System', text: system.name },
+		...(placement?.kind === 'system'
+			? [{ label: 'Constellation', text: placement.constellation }]
+			: []),
+		{ label: 'Region', text: system.region },
+	]);
 
 	const groups = $derived(
 		systemLinkGroups({
@@ -60,6 +71,24 @@
 	{/if}
 	<ContextMenu.Separator />
 {/if}
+
+<ContextMenu.Sub>
+	<ContextMenu.SubTrigger data-testid="menu-copy">
+		<CopyIcon class="size-4" />
+		Copy
+	</ContextMenu.SubTrigger>
+	<ContextMenu.SubContent class="w-52" data-testid="copy-submenu">
+		{#each names as name (name.label)}
+			<ContextMenu.Item
+				class="justify-between gap-4"
+				onSelect={() => void copyText(name.text, { success: `${name.label} name copied` })}
+			>
+				{name.label}
+				<span class="truncate text-muted-foreground">{name.text}</span>
+			</ContextMenu.Item>
+		{/each}
+	</ContextMenu.SubContent>
+</ContextMenu.Sub>
 
 <ExternalLinksSubmenu {groups} />
 

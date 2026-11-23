@@ -44,6 +44,12 @@ pub fn is_wormhole_class(id: Option<i32>) -> bool {
     matches!(id, Some(1..=6 | 12..=18 | C1_TO_3 | C4_TO_5))
 }
 
+/// Classes 19 to 23 are abyssal deadspace and the other instanced pockets: a system to the
+/// game, but nowhere a wormhole leads, so never part of a chain.
+pub fn is_abyssal_class(id: Option<i32>) -> bool {
+    matches!(id, Some(19..=23))
+}
+
 /// A class's short label: `C5`, `H`, `L`, `N`, `P`.
 pub fn class_short(id: i32) -> Option<&'static str> {
     Some(match id {

@@ -20,8 +20,9 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AnyWindowHandle, App, AppContext, Bounds, Context, Div, Entity, Hsla,
     InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Point, Render, Size, Stateful, Styled, Subscription, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, canvas, div, point, px,
+    ParentElement, Pixels, PlatformDisplay, Point, Render, Size, Stateful, Styled, Subscription,
+    Window, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, canvas, div,
+    point, px,
 };
 
 use crate::config::Overlay;
@@ -364,16 +365,12 @@ impl Render for OverlayView {
         self.update_input_region(popup, window);
         #[cfg(not(target_os = "linux"))]
         self.sync_native_input(window, cx);
-        let guides: Vec<AnyElement> = self
-            .drag
-            .as_ref()
-            .map(|d| {
-                d.guides
-                    .iter()
-                    .map(|g| guide_line(*g, viewport, theme.primary.opacity(0.6)))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let guides: Vec<AnyElement> = self.drag.as_ref().map_or_default(|d| {
+            d.guides
+                .iter()
+                .map(|g| guide_line(*g, viewport, theme.primary.opacity(0.6)))
+                .collect()
+        });
 
         div()
             .size_full()
@@ -397,13 +394,62 @@ impl Render for OverlayView {
     }
 }
 
+/// A monitor the overlay can be put on.
+pub(crate) struct Monitor {
+    /// What the settings keep: the same after a restart, unlike the display's id.
+    pub key: String,
+    /// Its number counted from the left, and its size.
+    pub label: String,
+}
+
+/// The connected monitors, left to right and then top to bottom.
+pub(crate) fn monitors(cx: &App) -> Vec<Monitor> {
+    let mut displays: Vec<_> = cx
+        .displays()
+        .into_iter()
+        .filter_map(|d| Some((d.uuid().ok()?.to_string(), d.bounds())))
+        .collect();
+    displays.sort_by(|(_, a), (_, b)| {
+        (a.origin.x, a.origin.y)
+            .partial_cmp(&(b.origin.x, b.origin.y))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    displays
+        .into_iter()
+        .enumerate()
+        .map(|(i, (key, bounds))| Monitor {
+            key,
+            label: format!(
+                "{} ({}×{})",
+                i + 1,
+                f32::from(bounds.size.width).round(),
+                f32::from(bounds.size.height).round()
+            ),
+        })
+        .collect()
+}
+
+/// The monitor the settings name, else the main one. On Wayland there is no main one, and
+/// `None` leaves the choice to the compositor.
+fn display(settings: &Overlay, cx: &App) -> Option<Rc<dyn PlatformDisplay>> {
+    settings
+        .monitor
+        .as_ref()
+        .and_then(|key| {
+            cx.displays()
+                .into_iter()
+                .find(|d| d.uuid().is_ok_and(|uuid| uuid.to_string() == *key))
+        })
+        .or_else(|| cx.primary_display())
+}
+
 /// Open the overlay as `settings` describe it.
 pub(crate) fn open(
     sigs: Entity<Sigs>,
     settings: &Overlay,
     cx: &mut App,
 ) -> anyhow::Result<AnyWindowHandle> {
-    let display = cx.primary_display();
+    let display = display(settings, cx);
     let screen = display.as_ref().map_or_else(
         || {
             Bounds::new(
@@ -428,6 +474,7 @@ pub(crate) fn open(
                     point(px(0.0), px(0.0)),
                     gpui_kit::size(px(0.0), px(0.0)),
                 ))),
+                display_id: display.as_ref().map(|d| d.id()),
                 app_id: Some("wormholesystems-overlay".into()),
                 window_background: WindowBackgroundAppearance::Transparent,
                 kind: WindowKind::LayerShell(LayerShellOptions {
@@ -453,6 +500,7 @@ pub(crate) fn open(
                 point(screen.origin.x + px(x), screen.origin.y + px(y)),
                 gpui_kit::size(px(w), px(h)),
             ))),
+            display_id: display.map(|d| d.id()),
             titlebar: None,
             focus: false,
             kind: WindowKind::PopUp,

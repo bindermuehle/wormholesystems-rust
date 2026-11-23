@@ -18,6 +18,7 @@
 	import MapPanelContent from '$lib/components/map-panel/MapPanelContent.svelte';
 	import MapPanelHeader from '$lib/components/map-panel/MapPanelHeader.svelte';
 	import SystemMenu from '../system-menu/SystemMenu.svelte';
+	import SystemMenuButton from '../system-menu/SystemMenuButton.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import * as Tooltip from '$lib/components/ui/tooltip';
@@ -277,6 +278,7 @@
 							>
 								{timeAgo(kill.time, now)}
 							</span>
+							<SystemMenuButton name={kill.system_name} class="shrink-0" />
 						</div>
 					{/snippet}
 

@@ -1,0 +1,45 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into structure_events\n             (corporation_id, kind, notification_type, structure_id, moon_id, planet_id,\n              type_id, solar_system_id, aggressor_character_id, aggressor_corporation_id,\n              aggressor_alliance_id, aggressor_corporation, shield, armor, hull,\n              timer_ends_at, occurred_at, dedup_key)\n         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,\n                 $18)\n         on conflict (dedup_key) do update set dedup_key = excluded.dedup_key\n         returning id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "structure_events",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Text",
+        "Float4",
+        "Float4",
+        "Float4",
+        "Timestamptz",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "83bf4f8bda61cdf1869bcc223d3d94be5be98959a1a8bc85a882abb44f2d6ff9"
+}

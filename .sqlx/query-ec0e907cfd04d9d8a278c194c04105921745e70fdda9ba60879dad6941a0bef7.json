@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select count(*) as \"sharers!\" from map_user_settings mus\n           join map_user_roles r on r.map_id = mus.map_id and r.user_id = mus.user_id\n           where mus.map_id = $1 and mus.structures_shared",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "sharers!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "ec0e907cfd04d9d8a278c194c04105921745e70fdda9ba60879dad6941a0bef7"
+}

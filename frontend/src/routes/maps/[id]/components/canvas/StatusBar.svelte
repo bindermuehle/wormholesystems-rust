@@ -5,6 +5,7 @@
 	import EyeIcon from '@lucide/svelte/icons/eye';
 	import LayoutGridIcon from '@lucide/svelte/icons/layout-grid';
 	import RadarIcon from '@lucide/svelte/icons/radar';
+	import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import Redo2Icon from '@lucide/svelte/icons/redo-2';
 	import CircleHelpIcon from '@lucide/svelte/icons/circle-help';
@@ -26,12 +27,14 @@
 	import { cn } from '$lib/utils';
 	import type { MapState } from '../../state/map-state.svelte';
 	import HistoryPopover from '../overlays/HistoryPopover.svelte';
+	import RollingDialog from '../overlays/RollingDialog.svelte';
 	import StaleConnectionsPopover from '../connection/StaleConnectionsPopover.svelte';
 	import TrackingSettings from '../tracking/TrackingSettings.svelte';
 
 	let { map, onstarttour }: { map: MapState; onstarttour?: () => void } = $props();
 
 	const canWrite = $derived(map.canWrite);
+	let rollingOpen = $state(false);
 	// Somebody following a share link has no pilot, so the pilot warnings have nobody to be
 	// about.
 	const watching = $derived(page.data.me == null);
@@ -231,6 +234,25 @@
 		<Tooltip.Content>Show me around</Tooltip.Content>
 	</Tooltip.Root>
 
+	<Tooltip.Root>
+		<Tooltip.Trigger>
+			{#snippet child({ props })}
+				<Button
+					{...props}
+					variant="ghost"
+					size="icon"
+					class="size-7"
+					aria-label="Rolling cheat sheet"
+					data-testid="rolling-button"
+					onclick={() => (rollingOpen = true)}
+				>
+					<ScrollTextIcon />
+				</Button>
+			{/snippet}
+		</Tooltip.Trigger>
+		<Tooltip.Content>Rolling cheat sheet</Tooltip.Content>
+	</Tooltip.Root>
+
 	<Separator orientation="vertical" class="h-4" />
 
 	{#if map.userSettings}
@@ -345,3 +367,5 @@
 		</Tooltip.Root>
 	{/if}
 </div>
+
+<RollingDialog {map} bind:open={rollingOpen} />

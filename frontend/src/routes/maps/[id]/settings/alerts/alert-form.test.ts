@@ -15,6 +15,8 @@ const draft = (over: Partial<AlertDraft> = {}): AlertDraft => ({
 	maxJumps: 5,
 	shipType: 'dreadnought',
 	jdcLevel: 5,
+	fuelDays: 3,
+	structureEvents: [],
 	filters: [],
 	filterMatch: 'any',
 	...over,
@@ -93,5 +95,33 @@ describe('toSaveAlert', () => {
 	it('carries the role only when the mention asks for one', () => {
 		expect(toSaveAlert(draft({ roleRef: 7 })).map_webhook_role_id).toBeUndefined();
 		expect(toSaveAlert(draft({ mention: 'role', roleRef: 7 })).map_webhook_role_id).toBe(7);
+	});
+});
+
+describe('structure alerts', () => {
+	it('need no system, and a fuel alert needs a sensible number of days', () => {
+		expect(isValidAlert(draft({ kind: 'structure_attack' }))).toBe(false);
+		expect(isValidAlert(draft({ kind: 'structure_attack', structureEvents: ['lost_armor'] }))).toBe(
+			true,
+		);
+		expect(isValidAlert(draft({ kind: 'structure_fuel', fuelDays: 7 }))).toBe(true);
+		expect(isValidAlert(draft({ kind: 'structure_fuel', fuelDays: 0 }))).toBe(false);
+		expect(isValidAlert(draft({ kind: 'structure_fuel', fuelDays: 31 }))).toBe(false);
+		expect(isValidAlert(draft({ kind: 'structure_fuel', fuelDays: 2.5 }))).toBe(false);
+	});
+
+	it('send the days only for fuel, and nothing about jumps or systems', () => {
+		const fuel = toSaveAlert(draft({ kind: 'structure_fuel', fuelDays: 7, target: 30000142 }));
+		expect(fuel.fuel_days).toBe(7);
+		expect(fuel.max_jumps).toBe(0);
+		expect(fuel.target_solar_system_id).toBeUndefined();
+		const attack = toSaveAlert(
+			draft({ kind: 'structure_attack', fuelDays: 7, structureEvents: ['lost_armor'] }),
+		);
+		expect(attack.structure_events).toEqual(['lost_armor']);
+		// A kill alert has no say in structure events, whatever the form still holds.
+		expect(toSaveAlert(draft({ structureEvents: ['lost_armor'] })).structure_events).toEqual([]);
+		expect(attack.fuel_days).toBeUndefined();
+		expect(attack.max_jumps).toBe(0);
 	});
 });

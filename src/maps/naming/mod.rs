@@ -65,8 +65,17 @@ pub struct NamingMap {
     adjacent: HashMap<i64, Vec<i64>>,
     /// Worked out the first time a strategy asks.
     distances: OnceLock<HashMap<i64, u32>>,
+    chains: OnceLock<Chains>,
     /// What only the echo strategy reads; empty on every other map.
     echo: echo::EchoFacts,
+}
+
+/// The map cut into its separate chains: which one each node is in, and which of them hang
+/// off a root.
+#[derive(Debug, Clone, Default)]
+struct Chains {
+    of: HashMap<i64, usize>,
+    rooted: Vec<bool>,
 }
 
 impl NamingMap {
@@ -84,6 +93,7 @@ impl NamingMap {
             index,
             adjacent,
             distances: OnceLock::new(),
+            chains: OnceLock::new(),
             echo: echo::EchoFacts::default(),
         }
     }
@@ -125,32 +135,103 @@ impl NamingMap {
         self.nodes.iter().filter_map(|n| n.alias.clone()).collect()
     }
 
-    /// How many connections each node is from home: the map's home system, or a node that
-    /// carries the ignored alias. Nodes that cannot reach home are left out, and so is
-    /// everything on a map without one.
+    /// Whether a chain starts at `node`: a home system, one carrying the ignored alias, or a
+    /// pinned one.
+    fn is_root(&self, node: &Node) -> bool {
+        node.is_home || node.is_pinned || self.carries_ignored_alias(node)
+    }
+
+    fn carries_ignored_alias(&self, node: &Node) -> bool {
+        chain::is_ignored_alias(node.alias.as_deref(), &self.settings.ignored_alias)
+    }
+
+    fn chains(&self) -> &Chains {
+        self.chains.get_or_init(|| {
+            let mut chains = Chains::default();
+            for start in &self.nodes {
+                if chains.of.contains_key(&start.id) {
+                    continue;
+                }
+                let chain = chains.rooted.len();
+                let mut rooted = false;
+                let mut queue = VecDeque::from([start.id]);
+                chains.of.insert(start.id, chain);
+                while let Some(id) = queue.pop_front() {
+                    rooted |= self.node(id).is_some_and(|n| self.is_root(n));
+                    for &neighbour in self.adjacent.get(&id).into_iter().flatten() {
+                        if let Entry::Vacant(slot) = chains.of.entry(neighbour) {
+                            slot.insert(chain);
+                            queue.push_back(neighbour);
+                        }
+                    }
+                }
+                chains.rooted.push(rooted);
+            }
+            chains
+        })
+    }
+
+    /// The aliases a system reached from `origin` has to stay clear of. Two chains that
+    /// each hang off a root of their own (two homes, a home and a pinned staging system)
+    /// and do not touch are numbered apart, so both have a `1`. Everything else counts as
+    /// before: `origin`'s own chain, and whatever drifts with no root at all, which is as
+    /// likely a branch that lost its hole as a chain of its own.
+    pub fn aliases_seen_from(&self, origin: i64) -> Vec<String> {
+        let chains = self.chains();
+        let own = chains.of.get(&origin).copied();
+        if !own.is_some_and(|chain| chains.rooted[chain]) {
+            return self.aliases();
+        }
+        self.nodes
+            .iter()
+            .filter(|n| {
+                let chain = chains.of.get(&n.id).copied();
+                chain == own || !chain.is_some_and(|chain| chains.rooted[chain])
+            })
+            .filter_map(|n| n.alias.clone())
+            .collect()
+    }
+
+    /// How many connections each node is from home: one of the map's home systems, or a
+    /// node that carries the ignored alias. A chain with neither is counted from its pinned
+    /// systems, which are the root it has. Nodes that can reach none of those are left out.
     pub fn distances_from_home(&self) -> &HashMap<i64, u32> {
         self.distances.get_or_init(|| {
             let mut distance = HashMap::new();
-            let mut queue = VecDeque::new();
-            for node in &self.nodes {
-                if node.is_home
-                    || chain::is_ignored_alias(node.alias.as_deref(), &self.settings.ignored_alias)
-                {
-                    distance.insert(node.id, 0);
-                    queue.push_back(node.id);
-                }
-            }
-            while let Some(id) = queue.pop_front() {
-                let next = distance[&id] + 1;
-                for &neighbour in self.adjacent.get(&id).into_iter().flatten() {
-                    if let Entry::Vacant(slot) = distance.entry(neighbour) {
-                        slot.insert(next);
-                        queue.push_back(neighbour);
-                    }
-                }
-            }
+            let homes = self
+                .nodes
+                .iter()
+                .filter(|n| n.is_home || self.carries_ignored_alias(n));
+            self.spread(&mut distance, homes.map(|n| n.id).collect());
+            // Only where no home reaches: a pinned system on the way out from home is a
+            // stop along the chain, not the start of one.
+            let pinned = self
+                .nodes
+                .iter()
+                .filter(|n| n.is_pinned && !distance.contains_key(&n.id))
+                .map(|n| n.id)
+                .collect();
+            self.spread(&mut distance, pinned);
             distance
         })
+    }
+
+    /// Breadth-first out from `sources`, over the nodes `distance` does not hold yet.
+    fn spread(&self, distance: &mut HashMap<i64, u32>, sources: Vec<i64>) {
+        let mut queue = VecDeque::new();
+        for id in sources {
+            distance.insert(id, 0);
+            queue.push_back(id);
+        }
+        while let Some(id) = queue.pop_front() {
+            let next = distance[&id] + 1;
+            for &neighbour in self.adjacent.get(&id).into_iter().flatten() {
+                if let Entry::Vacant(slot) = distance.entry(neighbour) {
+                    slot.insert(next);
+                    queue.push_back(neighbour);
+                }
+            }
+        }
     }
 
     /// The nodes one connection away from `id`.
@@ -170,6 +251,7 @@ pub struct Node {
     pub id: i64,
     pub alias: Option<String>,
     pub is_home: bool,
+    pub is_pinned: bool,
     pub system: Option<NodeSystem>,
 }
 
@@ -255,7 +337,7 @@ async fn load(pool: &PgPool, _reader: Reader, map_id: i64) -> Result<NamingMap> 
     };
 
     let nodes = sqlx::query!(
-        r#"select mss.id, mss.alias, mss.is_home, mss.solar_system_id,
+        r#"select mss.id, mss.alias, mss.is_home, mss.is_pinned, mss.solar_system_id,
                   ss.name as "name?", ss.security_status as "security?", ss.wormhole_class_id,
                   r.name as "region?", d.occupying_group
            from map_solar_systems mss
@@ -275,6 +357,7 @@ async fn load(pool: &PgPool, _reader: Reader, map_id: i64) -> Result<NamingMap> 
         id: row.id,
         alias: row.alias,
         is_home: row.is_home,
+        is_pinned: row.is_pinned,
         system: row.solar_system_id.map(|solar_system_id| NodeSystem {
             solar_system_id,
             name: row.name.unwrap_or_default(),

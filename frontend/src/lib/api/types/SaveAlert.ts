@@ -5,6 +5,7 @@ import type { AlertMention } from "./AlertMention";
 import type { JumpShip } from "./JumpShip";
 import type { Match } from "./Match";
 import type { Rule } from "./Rule";
+import type { StructureEventKind } from "./StructureEventKind";
 
 export type SaveAlert = { name: string, kind: AlertKind, delivery: AlertDelivery, 
 /**
@@ -19,4 +20,13 @@ map_webhook_role_id?: number, mention: AlertMention, target_solar_system_id?: nu
  * Proximity only: measure from here through the chain instead of from the nearest
  * mapped system.
  */
-origin_solar_system_id?: number, max_jumps: number, ship_type?: JumpShip, jdc_level?: number, filters: Array<Rule>, filter_match: Match, };
+origin_solar_system_id?: number, max_jumps: number, ship_type?: JumpShip, jdc_level?: number, 
+/**
+ * Structure fuel only: how many days before the fuel runs out to fire.
+ */
+fuel_days?: number, 
+/**
+ * Structure alerts only: which events to speak about. Left out or empty, the alert
+ * takes its kind's usual set.
+ */
+structure_events: Array<StructureEventKind>, filters: Array<Rule>, filter_match: Match, };

@@ -3,6 +3,8 @@
 
 import type { MapSystemView } from '$lib/api/types/MapSystemView';
 import { classMeta } from '$lib/map/classes';
+import { BEND_SPACING, LANE_MARGIN, packLanes } from '$lib/map/edges';
+import { NODE_W } from '$lib/map/geometry';
 import { systemName } from '$lib/map/system';
 
 export interface TreeEdge {
@@ -15,8 +17,8 @@ export interface TreeInput {
 	edges: TreeEdge[];
 	/** Pinned systems, which become the roots the branches grow out of. */
 	rootIds: number[];
-	/** A root like the pinned ones, and the one the column starts with. */
-	homeId?: number | null;
+	/** Roots like the pinned ones, and the ones the column starts with. */
+	homeIds?: number[];
 	/** Used as the root when nothing is pinned and there is no home system. */
 	fallbackRootId?: number | null;
 	/** Orders siblings, and the separate trees, down the cross axis. */
@@ -24,8 +26,10 @@ export interface TreeInput {
 }
 
 export interface TreeOptions {
-	/** Distance between depth levels, in world units. */
+	/** Widest distance between depth levels, in world units: what a busy corridor gets. */
 	levelGap?: number;
+	/** Narrowest distance between depth levels, for a corridor with only a line or two in it. */
+	minLevelGap?: number;
 	/** Smallest distance between siblings, in world units. */
 	siblingGap?: number;
 	/** Snaps the result onto the same grid the manual map uses. */
@@ -59,6 +63,9 @@ interface LayoutNode {
  * to whichever root reaches it first. Cross-axis packing is Reingold–Tilford in Buchheim's
  * linear form, so a tall branch pushes the next clear of its whole extent.
  *
+ * Columns sit only as far apart as the lines between them need, so a fan of eight holes
+ * gets its room and a single hole further down the chain does not.
+ *
  * Returns a node top-left per system id, in world units, snapped to the grid.
  */
 export function computeTreeLayout(
@@ -75,8 +82,11 @@ export function computeTreeLayout(
 	// between them rather than a snap to one side.
 	const crossStep = gridSize / 2;
 	const snapCross = (value: number) => Math.round(value / crossStep) * crossStep;
-	// Wide enough for an edge's badge cluster at its midpoint to clear both nodes.
+	// The corridor between two columns is as wide as the lines through it need, between
+	// these two. The narrow end still lets a badge cluster at an edge's midpoint clear both
+	// nodes.
 	const levelGap = snap(options.levelGap ?? 320);
+	const minLevelGap = Math.min(levelGap, snap(options.minLevelGap ?? 260));
 	// A whole number of cells, so half of it is a whole number of cross steps and every
 	// midpoint the layout can produce is a position it can actually place. Node height is
 	// two cells, so this leaves a gap of one cell between neighbours.
@@ -124,10 +134,10 @@ export function computeTreeLayout(
 
 	// Pinned first, stranded after, so the left column reads in order of what matters.
 	const chosen = new Set<number>();
-	const home = input.homeId != null && adjacency.has(input.homeId) ? input.homeId : null;
+	const homes = new Set((input.homeIds ?? []).filter((id) => adjacency.has(id)));
 	const candidates = [
-		...(home === null ? [] : [home]),
-		...input.rootIds.filter((id) => adjacency.has(id) && id !== home),
+		...homes,
+		...input.rootIds.filter((id) => adjacency.has(id) && !homes.has(id)),
 	];
 	if (
 		candidates.length === 0 &&
@@ -159,7 +169,7 @@ export function computeTreeLayout(
 		for (const [, children] of childrenOf) children.sort(compare);
 	}
 	// Home, then pinned, then unreached; the comparator only orders within each rank.
-	const rank = (id: number) => (id === home ? 0 : chosen.has(id) ? 1 : 2);
+	const rank = (id: number) => (homes.has(id) ? 0 : chosen.has(id) ? 1 : 2);
 	roots.sort((a, b) => rank(a) - rank(b) || (compare ? compare(a, b) : 0));
 
 	// --- The forest as linked records the walks can chew on. ---
@@ -327,10 +337,61 @@ export function computeTreeLayout(
 	for (const node of nodes.values()) minCross = Math.min(minCross, node.cross);
 	if (!Number.isFinite(minCross)) minCross = 0;
 
+	// --- How wide each corridor has to be. ---
+	// Breadth-first depths differ by at most one across an edge, so every edge either
+	// crosses the corridor after the shallower end's column or stays inside one column.
+	const runs = new Map<number, [number, number][]>();
+	const detours = new Map<number, number>();
+	const byDepth = new Map<number, number[]>();
+	for (const node of nodes.values()) {
+		const column = byDepth.get(node.depth);
+		if (column) column.push(node.cross);
+		else byDepth.set(node.depth, [node.cross]);
+	}
+	const seen = new Set<string>();
+	for (const edge of input.edges) {
+		const a = nodes.get(edge.from);
+		const b = nodes.get(edge.to);
+		if (!a || !b || a === b) continue;
+		const key = a.id < b.id ? `${a.id}:${b.id}` : `${b.id}:${a.id}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		const low = Math.min(a.cross, b.cross);
+		const high = Math.max(a.cross, b.cross);
+		if (a.depth !== b.depth) {
+			const depth = Math.min(a.depth, b.depth);
+			const corridor = runs.get(depth);
+			if (corridor) corridor.push([low, high]);
+			else runs.set(depth, [[low, high]]);
+		} else if (byDepth.get(a.depth)!.some((cross) => cross > low && cross < high)) {
+			// Something sits between them, so the router takes the edge around through the
+			// corridor to the right.
+			detours.set(a.depth, (detours.get(a.depth) ?? 0) + 1);
+		}
+	}
+	// The room one more lane asks for: enough that a badge on the outermost run does not
+	// lean far into the node beside it.
+	const lanePitch = 24;
+	const columnX = new Map<number, number>();
+	let x = marginX;
+	for (const depth of [...byDepth.keys()].sort((a, b) => a - b)) {
+		columnX.set(depth, x);
+		// Longest first, the order the router packs them in.
+		const spans = (runs.get(depth) ?? []).sort((a, b) => b[1] - b[0] - (a[1] - a[0]));
+		const lanes = spans.length > 0 ? Math.max(...packLanes(spans)) + 1 : 0;
+		const around = detours.get(depth) ?? 0;
+		const corridor = Math.max(
+			(lanes + 1) * lanePitch,
+			around > 0 ? LANE_MARGIN + (around - 1) * BEND_SPACING + lanePitch : 0,
+		);
+		const pitch = Math.ceil((NODE_W + corridor) / gridSize) * gridSize;
+		x += Math.min(Math.max(pitch, minLevelGap), levelGap);
+	}
+
 	const positions = new Map<number, { x: number; y: number }>();
 	for (const node of nodes.values()) {
 		positions.set(node.id, {
-			x: snap(marginX + node.depth * levelGap),
+			x: snap(columnX.get(node.depth) ?? marginX),
 			y: snapCross(marginY + node.cross - minCross),
 		});
 	}
