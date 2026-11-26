@@ -242,9 +242,10 @@ fn next_slot_letter(branch: char, kind: &str, aliases: &[String]) -> Option<char
 /// Whether the hole `signature`, scanned in home, is home's static.
 ///
 /// Nothing in the data says which of two H296s in a C5 with an H296 static is the static:
-/// a wandering H296 looks the same. The earliest scanned wins, ties going to the lower id,
-/// and the scout renames it if that turns out wrong. Two holes sharing the `s` slot would be
-/// worse.
+/// a wandering H296 looks the same. A hole of that code already carrying the static's name
+/// keeps it, so retyping the other one cannot take the slot as well; with no such name yet,
+/// the earliest scanned wins, ties going to the lower id, and the scout renames it if that
+/// turns out wrong. Two holes sharing the `s` slot would be worse.
 fn is_home_static(map: &NamingMap, home: &Node, signature: Option<i64>) -> bool {
     let facts = map.echo();
     let (Some(scan), Some(system)) = (signature.and_then(|pk| facts.scan(pk)), &home.system) else {
@@ -258,12 +259,32 @@ fn is_home_static(map: &NamingMap, home: &Node, signature: Option<i64>) -> bool 
     {
         return false;
     }
-    facts
+    let same_code: Vec<&Scan> = facts
         .scans
         .iter()
         .filter(|s| s.solar_system_id == system.solar_system_id && s.code.as_deref() == Some(code))
+        .collect();
+    if let Some(holder) = same_code
+        .iter()
+        .find(|s| leads_to_static_name(map, home, s))
+    {
+        return holder.pk == scan.pk;
+    }
+    same_code
+        .iter()
         .min_by_key(|s| (s.created_at, s.pk))
         .is_some_and(|first| first.pk == scan.pk)
+}
+
+/// Whether `scan`, in home, leads to a node carrying a name echo writes for a static: the
+/// `s` slot, as in `a5s`.
+fn leads_to_static_name(map: &NamingMap, home: &Node, scan: &Scan) -> bool {
+    scan.connection_id
+        .and_then(|id| map.edge(id))
+        .map(|e| if e.from == home.id { e.to } else { e.from })
+        .and_then(|id| map.node(id))
+        .and_then(|n| n.alias.as_deref())
+        .is_some_and(|alias| is_generated(alias) && alias.trim().ends_with('s'))
 }
 
 /// The facts for map `map_id`, whose graph is `map`.
@@ -754,6 +775,28 @@ mod tests {
         assert_eq!(
             Echo.alias(&m, &home(), &wormhole(5, Some(10))).as_deref(),
             Some("a5s")
+        );
+    }
+
+    #[test]
+    fn the_static_name_stays_with_the_hole_that_has_it() {
+        // Altar, 2026-11-26: two H296s pasted in the same second. VMI-230 (the higher id)
+        // got a5s while PIF-330 had no type; then PIF-330 was typed H296 too, and took the
+        // static slot again as b5s because it wins the tie on id.
+        let nodes = vec![home(), ghost(2, None), ghost(3, Some("a5s"))];
+        let edges = vec![edge(1, 1, 2), edge(2, 1, 3)];
+        let pif = scan(7536, "H296", 5, 0, Some(1));
+        let vmi = scan(7537, "H296", 5, 0, Some(2));
+        let m = map(nodes, edges, &["H296"], vec![pif, vmi]);
+        assert_eq!(
+            suggest(&m, &home(), &wormhole(5, Some(7536)), Some(2), &[]).as_deref(),
+            Some("b5a"),
+            "the static is taken, so the other H296 is a wandering hole"
+        );
+        assert_eq!(
+            suggest(&m, &home(), &wormhole(5, Some(7537)), Some(3), &[]).as_deref(),
+            Some("a5s"),
+            "naming the holder again keeps its static name"
         );
     }
 
