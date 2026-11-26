@@ -201,9 +201,11 @@ test('closing the prompt still maps the jump, only unlinked', async ({
 	await pilot.page.keyboard.press('Escape');
 	await expect(dialog).toBeHidden();
 
+	// The origin, the system jumped to, and the node drawn for the scan. The scan's node
+	// exists from the paste on, so waiting for 2 would pass before the jump is mapped.
 	await expect
 		.poll(async () => (await graph(api, mapId)).systems.length, { timeout: 10_000 })
-		.toBe(2);
+		.toBe(3);
 	const view = await graph(api, mapId);
 	expect(view.systems.find((s) => s.solar_system_id === J005482)?.alias).toBe('1');
 	// The jump's own connection, plus the one to the node the unlinked scan is owed.

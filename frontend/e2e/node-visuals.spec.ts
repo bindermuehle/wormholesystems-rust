@@ -21,16 +21,18 @@ test('node shows class, alias, occupier, statics, effect, and region per space k
 	});
 
 	await gotoApp(page, `/maps/${mapId}`);
-	const whNode = page.getByTestId('system-node').filter({ hasText: 'J122515' });
+	// By alias: with an occupier the node no longer shows the system's name.
+	const whNode = page.getByTestId('system-node').filter({ hasText: 'Home' });
 
 	// Class label with the class color token.
 	const classLabel = whNode.getByText('C5', { exact: true }).first();
 	await expect(classLabel).toBeVisible();
 	await expect(classLabel).toHaveAttribute('style', /--color-c5/);
 
-	// Alias bright, real name dimmed, occupier in parentheses.
+	// Alias, then the occupier in parentheses in place of the real name.
 	await expect(whNode.getByText('Home', { exact: true })).toBeVisible();
 	await expect(whNode.getByText('(LZHX)')).toBeVisible();
+	await expect(whNode.getByText('J122515')).toHaveCount(0);
 
 	// W-space second row: colored static label with a physics tooltip.
 	const staticLabel = whNode.getByTestId('static-badge');
@@ -198,6 +200,8 @@ test('double click opens the alias editor and saves', async ({ page, api }) => {
 	await page.getByPlaceholder('Occupier alias').fill('Caldari');
 	await page.getByRole('button', { name: 'Save' }).click();
 
-	await expect(node.getByText('Market')).toBeVisible();
-	await expect(node.getByText('(Caldari)')).toBeVisible();
+	// With an occupier the node no longer shows "Jita", so it is found by its new alias.
+	const saved = page.getByTestId('system-node').filter({ hasText: 'Market' });
+	await expect(saved.getByText('(Caldari)')).toBeVisible();
+	await expect(saved.getByText('Jita')).toHaveCount(0);
 });
